@@ -90,16 +90,31 @@ check_udm() {
 
 # Install unifios-utilities if needed
 install_unifios_utilities() {
-    if [[ ! -f "/data/on_boot.sh" ]]; then
-        log_info "Installing unifios-utilities for boot persistence..."
-        if curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash; then
-            log_success "unifios-utilities installed"
+    if [[ ! -f "/data/on_boot.sh" ]] && [[ ! -d "/data/on_boot.d" ]]; then
+        log_warning "Boot persistence requires unifios-utilities or on_boot.d support"
+        log_info "This ensures dddns survives firmware updates"
+        echo ""
+        echo -n "Install unifios-utilities for boot persistence? [Y/n]: "
+        read -r response </dev/tty || response="y"
+
+        if [[ -z "$response" ]] || [[ "$response" =~ ^[Yy] ]]; then
+            log_info "Installing unifios-utilities..."
+            if curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash; then
+                log_success "unifios-utilities installed"
+            else
+                log_error "Failed to install unifios-utilities"
+                log_info "You may need to install it manually for persistence across reboots"
+            fi
         else
-            log_error "Failed to install unifios-utilities"
-            log_info "You may need to install it manually for persistence across reboots"
+            log_warning "Skipping unifios-utilities installation"
+            log_info "Note: dddns may not persist after firmware updates without it"
         fi
     else
-        log_success "unifios-utilities already installed"
+        if [[ -d "/data/on_boot.d" ]]; then
+            log_success "Boot persistence directory already exists"
+        else
+            log_success "unifios-utilities already installed"
+        fi
     fi
 
     # Ensure boot script directory exists
@@ -369,6 +384,27 @@ main() {
     if [[ "$action" == "uninstall" ]]; then
         uninstall
         exit 0
+    fi
+
+    # Show installation plan and get confirmation (unless --force)
+    if [[ "$force" != "true" ]]; then
+        echo ""
+        log_info "Installation Plan:"
+        echo "  • Install dddns binary to: /data/dddns/"
+        echo "  • Create symlink at: /usr/local/bin/dddns"
+        echo "  • Set up boot persistence in: /data/on_boot.d/"
+        echo "  • Configure cron job to run every 30 minutes"
+        echo "  • Create config directory at: /data/.dddns/"
+        echo "  • Log output to: /var/log/dddns.log"
+        echo ""
+        echo -n "Proceed with installation? [Y/n]: "
+        read -r response </dev/tty || response="y"
+
+        if [[ "$response" =~ ^[Nn] ]]; then
+            log_info "Installation cancelled by user"
+            exit 0
+        fi
+        echo ""
     fi
 
     # Install unifios-utilities if needed

@@ -23,3 +23,15 @@ go.work
 .idea
 
 bin/
+
+# Test logs
+logs/
+
+.idea/
+.mcp.json
+
+coverage.out
+
+**/.DS_Store
+
+dist/

@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build artifacts
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Logs and temp files
+logs/
+*.log
+tmp/
+temp/
+
+# Documentation
+docs/
+ai_docs/
+*.md
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Scripts (except docker/scripts which is needed)
+scripts/
+run-*.sh
+test-*.sh
+
+# Docker files (not needed in context)
+docker-compose.yml
+Dockerfile.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go workspace
+go.work
+go.work.sum

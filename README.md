@@ -96,20 +96,32 @@ dddns --version                                # Show version
 ## How It Works
 
 ```mermaid
-graph LR
-    A[Cron Job<br/>30 min] --> B[Check IP]
-    B --> C{IP<br/>Changed?}
-    C -->|No| D[Exit]
-    C -->|Yes| E[Query<br/>Route53]
-    E --> F{Need<br/>Update?}
-    F -->|No| D
-    F -->|Yes| G[Update<br/>DNS]
-    G --> H[Cache &<br/>Log]
-    H --> D
+flowchart LR
+    A[Cron Job<br/>Every 30 min]:::start
+    A -.-> B
 
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style G fill:#9f9,stroke:#333,stroke-width:2px
-    style D fill:#ff9,stroke:#333,stroke-width:2px
+    subgraph " "
+        direction LR
+        B[dddns update] --> C{Check IP}
+        C --> D[Get IP]
+        D --> E{Compare<br/>Cache}
+        E -->|Changed| F[Query<br/>Route53]
+        E -->|Same| G[Skip]
+        F --> H{Need<br/>Update?}
+        H -->|Yes| I[Update<br/>DNS]:::update
+        H -->|No| G
+        I --> J[Cache &<br/>Log]
+    end
+
+    J --> L[Exit]:::exit
+    G --> L
+
+    A ~~~ B
+    J ~~~ L
+
+    classDef start fill:#f9f,stroke:#333,stroke-width:2px
+    classDef update fill:#9f9,stroke:#333,stroke-width:2px
+    classDef exit fill:#ff9,stroke:#333,stroke-width:2px
 ```
 
 The flow ensures minimal API calls and only updates DNS when necessary, making it efficient and ISP-friendly.

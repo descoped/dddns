@@ -62,11 +62,23 @@ main() {
     # Step 1: Check environment
     print_info "Starting environment checks..."
 
-    run_step "Check if running on UDM" \
-        test -f /etc/unifi-os/unifi-os.conf
+    # Check for different UniFi OS versions
+    if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
+        run_step "Check if running on UDM (UniFi OS v3)" \
+            test -f /etc/unifi-os/unifi-os.conf
 
-    run_step "Display system information" \
-        cat /etc/unifi-os/unifi-os.conf
+        run_step "Display system information" \
+            cat /etc/unifi-os/unifi-os.conf
+    elif [[ -d /etc/unifi-core ]]; then
+        run_step "Check if running on UDM/UDR (UniFi OS v4)" \
+            test -d /etc/unifi-core
+
+        run_step "Display version information" \
+            cat /usr/lib/version 2>/dev/null || echo "Version file not found"
+    else
+        run_step "Check for Ubiquiti device" \
+            test -f /etc/board.info || test -d /data
+    fi
 
     run_step "Check architecture" \
         uname -m

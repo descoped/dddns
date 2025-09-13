@@ -58,11 +58,23 @@ detect_arch() {
     esac
 }
 
-# Check if this is a UDM device
+# Check if this is a UDM/UDR device
 check_udm() {
+    # First check if /data exists (required for all UniFi devices)
     if [[ ! -d "/data" ]]; then
-        log_error "/data directory not found - this doesn't appear to be a UDM device"
+        log_error "/data directory not found - this doesn't appear to be a UDM/UDR device"
         exit 1
+    fi
+
+    # Detect UniFi OS version
+    if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
+        log_info "Detected UniFi OS v3 (UDM)"
+    elif [[ -d /etc/unifi-core ]] || [[ -d /data/unifi ]]; then
+        log_info "Detected UniFi OS v4 (UDM/UDR)"
+    elif [[ -f /etc/board.info ]]; then
+        log_info "Detected Ubiquiti device"
+    else
+        log_warning "Could not determine UniFi OS version, but /data exists - continuing"
     fi
 
     # Check available space

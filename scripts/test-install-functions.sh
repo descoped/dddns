@@ -121,15 +121,32 @@ detect_arch() {
     return 0
 }
 
-# Check if running on UDM
+# Check if running on UDM/UDR
 check_udm() {
-    log_debug "Checking for UDM environment"
+    log_debug "Checking for UDM/UDR environment"
 
+    # Check for UniFi OS v3 (older UDM)
     if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
-        log_success "Running on Ubiquiti Dream Machine"
+        log_success "Running on Ubiquiti Dream Machine (UniFi OS v3)"
         if [[ "$VERBOSE" == true ]]; then
             log_debug "UDM configuration:"
             cat /etc/unifi-os/unifi-os.conf | head -5
+        fi
+        return 0
+    # Check for UniFi OS v4 (newer UDM/UDR)
+    elif [[ -d /etc/unifi-core ]] || [[ -d /data/unifi ]]; then
+        log_success "Running on Ubiquiti Dream Machine (UniFi OS v4)"
+        if [[ "$VERBOSE" == true && -f /usr/lib/version ]]; then
+            log_debug "Version info:"
+            cat /usr/lib/version | head -5
+        fi
+        return 0
+    # Check for board.info (another UDM/UDR indicator)
+    elif [[ -f /etc/board.info ]]; then
+        log_success "Running on Ubiquiti device (detected via board.info)"
+        if [[ "$VERBOSE" == true ]]; then
+            log_debug "Board info:"
+            cat /etc/board.info | head -5
         fi
         return 0
     else

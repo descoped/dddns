@@ -23,7 +23,7 @@ This guide covers installation methods for all supported platforms.
 
 ```bash
 # Download and run installer
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-dddns-udm.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
 ```
 
 The installer will:
@@ -38,16 +38,16 @@ The installer will:
 
 ```bash
 # Check environment only (no installation)
-curl -fsL [...]/install-dddns-udm.sh | bash -s -- --check-only
+curl -fsL [...]/install.sh | bash -s -- --check-only
 
 # Install specific version
-curl -fsL [...]/install-dddns-udm.sh | bash -s -- --version v1.0.0
+curl -fsL [...]/install.sh | bash -s -- --version v1.0.0
 
 # Force reinstall/upgrade
-curl -fsL [...]/install-dddns-udm.sh | bash -s -- --force
+curl -fsL [...]/install.sh | bash -s -- --force
 
 # Uninstall
-curl -fsL [...]/install-dddns-udm.sh | bash -s -- --uninstall
+curl -fsL [...]/install.sh | bash -s -- --uninstall
 ```
 
 ### Manual Installation
@@ -349,7 +349,7 @@ dddns update --dry-run
 ### UDM
 ```bash
 # Re-run installer with --force
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-dddns-udm.sh | bash -s -- --force
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s -- --force
 ```
 
 ### Linux/macOS
@@ -364,7 +364,7 @@ sudo chmod +x /usr/local/bin/dddns
 
 ### UDM
 ```bash
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-dddns-udm.sh | bash -s -- --uninstall
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s -- --uninstall
 ```
 
 ### Linux/macOS

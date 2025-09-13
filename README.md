@@ -48,7 +48,7 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 
 ```bash
 # One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s
 
 # Configure
 dddns config init

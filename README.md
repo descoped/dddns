@@ -1,39 +1,96 @@
 # Descoped Dynamic DNS - dddns
 
-A lightweight CLI tool for updating AWS Route53 DNS A records with dynamic IP addresses. Designed for resource-constrained devices like Ubiquiti Dream Machines.
+A lightweight, secure CLI tool for updating AWS Route53 DNS A records with dynamic IP addresses. Designed for resource-constrained devices like Ubiquiti Dream Machines.
+
+## Features
+
+### 🚀 Core Functionality
+- **AWS Route53 Integration** - Updates DNS A records automatically (Route53 only)
+- **Smart IP Detection** - Reliable public IP detection via checkip.amazonaws.com
+- **Change Detection** - Only updates when IP actually changes
+- **Persistent Caching** - Remembers last IP to minimize API calls
+- **Proxy/VPN Protection** - Detects and prevents updates when behind proxy
+- **Dry Run Mode** - Test changes without modifying DNS records
+- **Force Updates** - Override cache when needed
+
+### 🔒 Security
+- **Device-Specific Encryption** - AES-256-GCM with hardware-derived keys
+- **Secure Credential Storage** - Encrypted configs locked to specific hardware
+- **No Environment Variables** - Credentials stored securely in config files
+- **File Permission Enforcement** - Automatic 600/400 permissions
+- **Memory Wiping** - Sensitive data cleared after use
+- **AWS Profile Support** - Integrates with AWS CLI credentials
+
+### 🖥️ Platform Support
+- **Ubiquiti Dream Machine** - UDM/UDR with UniFi OS v3/v4
+- **Linux** - AMD64, ARM64, ARM architectures
+- **macOS** - Intel and Apple Silicon
+- **Windows** - AMD64 and ARM64
+- **Docker** - Container deployment ready
+- **Automatic Platform Detection** - Adjusts paths and behavior per platform
+
+### 📦 Deployment
+- **Single Binary** - No dependencies, <10MB size
+- **Low Memory** - <20MB runtime usage
+- **Boot Persistence** - Survives firmware updates on UDM
+- **Cron Integration** - Automated scheduling built-in
+- **One-Line Installation** - Simple curl install for UDM
+- **Logging** - Comprehensive logs with rotation
+
+## Limitations
+
+⚠️ **AWS Route53 Only** - This tool is specifically designed for AWS Route53. Other DNS providers are not supported.
 
 ## Quick Start
 
+### Ubiquiti Dream Machine (UDM/UDR)
+
 ```bash
-# Install
-curl -L -o /usr/local/bin/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns-$(uname -s)-$(uname -m)
-chmod +x /usr/local/bin/dddns
+# One-line installation
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
 
 # Configure
 dddns config init
 
-# Update DNS
+# Test
+dddns update --dry-run
+```
+
+### Linux/macOS
+
+```bash
+# Download latest release
+curl -L -o /usr/local/bin/dddns \
+  https://github.com/descoped/dddns/releases/latest/download/dddns_$(uname -s)_$(uname -m).tar.gz
+tar -xzf dddns_*.tar.gz
+chmod +x dddns
+sudo mv dddns /usr/local/bin/
+
+# Configure and run
+dddns config init
 dddns update
 ```
 
-## Features
+## Commands
 
-- **Single binary** - No dependencies, <10MB
-- **Low memory** - <20MB runtime usage
-- **Secure** - Device-specific encrypted credentials
-- **Cron-friendly** - Quiet mode, persistent caching
-- **Cross-platform** - Linux, macOS, Windows, ARM64
+```bash
+dddns update [--dry-run] [--force] [--quiet]  # Update DNS record
+dddns config init                              # Interactive configuration
+dddns config check                             # Validate configuration
+dddns ip                                       # Show current public IP
+dddns verify                                   # Check DNS vs current IP
+dddns secure enable                            # Enable encrypted config
+dddns --version                                # Show version
+```
 
 ## Documentation
 
-User guides are in [docs/](docs/):
-- [Installation](docs/INSTALLATION.md) - Platform-specific installation
+- [Installation Guide](docs/INSTALLATION.md) - Detailed installation instructions
 - [Quick Start](docs/QUICK_START.md) - Get running in 5 minutes
 - [Configuration](docs/CONFIGURATION.md) - Configuration options
-- [Commands](docs/COMMANDS.md) - Command reference
-- [UDM Guide](docs/UDM_GUIDE.md) - Ubiquiti Dream Machine setup
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues
+- [Commands](docs/COMMANDS.md) - Full command reference
+- [UDM Guide](docs/UDM_GUIDE.md) - Ubiquiti-specific setup
+- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
 
 ## Development
 
@@ -42,84 +99,148 @@ User guides are in [docs/](docs/):
 - Go 1.22+
 - Make
 
-### Build
+### Building
 
 ```bash
-# Local build
+# Clone repository
+git clone https://github.com/descoped/dddns.git
+cd dddns
+
+# Build for current platform
 make build
 
-# Cross-compile for UDM
+# Build for UDM/UDR
 make build-udm
 
 # Run tests
 make test
 
-# Install locally
-sudo make install
+# Build all platforms
+make build-all
 ```
 
 ### Project Structure
 
 ```
-cmd/           # CLI commands and flags
+cmd/                  # CLI commands
 internal/
-├── config/    # Configuration management
-├── crypto/    # Device-specific encryption
-├── dns/       # Route53 client
-├── profile/   # Platform detection and paths
-└── version/   # Version information
+├── config/          # Configuration management
+├── crypto/          # Device-specific encryption
+├── dns/             # Route53 client
+├── profile/         # Platform detection
+└── version/         # Version information
 ```
-
-### Core Logic
-
-1. **IP Detection** - Check public IP via checkip.amazonaws.com
-2. **Change Detection** - Compare with cached IP from last run
-3. **DNS Update** - Update Route53 A record if IP changed
-4. **Caching** - Persist new IP to prevent unnecessary API calls
 
 ### Release Process
 
-Uses [GoReleaser](https://goreleaser.com/) with git tags:
+Releases use [GoReleaser](https://goreleaser.com/) with git tags:
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
-# GitHub Actions automatically builds and releases
 ```
 
-### Testing
+GitHub Actions automatically builds and releases binaries for all platforms.
+
+## Configuration
+
+### Example Configuration
+
+```yaml
+# ~/.dddns/config.yaml
+aws_region: us-east-1
+hosted_zone_id: ZXXXXXXXXXXXXX
+hostname: home.example.com
+ttl: 300
+
+# AWS credentials (or use AWS profile)
+access_key: AKIAXXXXXXXXXXXXXX
+secret_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### Secure Configuration
+
+For enhanced security, use encrypted configuration:
 
 ```bash
-# Unit tests
-go test ./...
+# Convert to encrypted config
+dddns secure enable
 
-# Integration tests
-go test -tags=integration ./tests/...
-
-# Coverage
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
+# Config is now encrypted with device-specific key
+# Cannot be moved between devices
 ```
 
-### Platform Profiles
+## Support
 
-dddns automatically detects platform and adjusts file paths:
+### Reporting Issues
 
-| Platform | Config | Cache | Notes |
-|----------|--------|-------|-------|
-| UDM/UDR | `/data/.dddns/` | Persistent across reboots |
-| Linux | `~/.dddns/` | Standard user directory |
-| macOS | `~/.dddns/` | Standard user directory |
-| Windows | `%APPDATA%/dddns/` | Windows standard location |
-| Docker | `/config/` | Container volume mount |
+If you encounter any problems:
 
-### Security
+1. Check the [Troubleshooting Guide](docs/TROUBLESHOOTING.md) first
+2. Search [existing issues](https://github.com/descoped/dddns/issues) to see if it's already reported
+3. Create a [new issue](https://github.com/descoped/dddns/issues/new) with:
+   - Your platform (UDM model, OS version)
+   - dddns version (`dddns --version`)
+   - Error messages or logs
+   - Steps to reproduce
 
-- **No hardcoded credentials** - Uses AWS profiles or encrypted config
-- **Device-specific encryption** - AES-256-GCM with hardware-derived keys
-- **Secure file permissions** - 600 for config, 400 for encrypted files
-- **Memory wiping** - Sensitive data cleared after use
+### Getting Help
+
+- 📖 [Documentation](docs/) - Comprehensive guides
+- 🐛 [Issues](https://github.com/descoped/dddns/issues) - Report bugs or request features
+- 💬 [Discussions](https://github.com/descoped/dddns/discussions) - Ask questions and share ideas
+
+## Contributing
+
+We welcome contributions! Whether it's bug fixes, new features, or documentation improvements, your help is appreciated.
+
+### How to Contribute
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests (`make test`)
+5. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+6. Push to your branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+### Development Guidelines
+
+- Follow Go best practices and conventions
+- Add tests for new functionality
+- Update documentation as needed
+- Keep commits atomic and well-described
+- Ensure all tests pass before submitting PR
+
+### Areas for Contribution
+
+- 🐛 Bug fixes
+- 📚 Documentation improvements
+- 🧪 Test coverage expansion
+- 🔧 Performance optimizations
+- 🌍 Internationalization
+- 🎨 Code refactoring
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+```
+MIT License
+
+Copyright (c) 2025 Descoped
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction...
+```
+
+## Acknowledgments
+
+- Built for the Ubiquiti Dream Machine community
+- Inspired by the need for reliable dynamic DNS on resource-constrained devices
+- Thanks to all contributors and users who provide feedback and improvements
+
+---
+
+**Note**: This tool is specifically designed for AWS Route53. If you need support for other DNS providers, please open an issue to discuss potential implementation.

@@ -238,10 +238,18 @@ get_release_info() {
         return 1
     fi
 
-    # Extract download URL for our architecture
-    DOWNLOAD_URL=$(echo "$release_json" | grep "browser_download_url.*linux-${ARCH}\"" | cut -d'"' -f4 | head -1)
+    # Extract download URL for our architecture (GoReleaser uses capitalized Linux)
+    DOWNLOAD_URL=$(echo "$release_json" | grep "browser_download_url.*Linux_${ARCH}.tar.gz\"" | cut -d'"' -f4 | head -1)
+
+    # For ARM, try armv7 if arm64 not found
+    if [[ -z "$DOWNLOAD_URL" ]] && [[ "$ARCH" == "arm" ]]; then
+        DOWNLOAD_URL=$(echo "$release_json" | grep "browser_download_url.*Linux_armv7.tar.gz\"" | cut -d'"' -f4 | head -1)
+    fi
+
     if [[ -z "$DOWNLOAD_URL" ]]; then
-        log_error "Failed to find download URL for linux-${ARCH}"
+        log_error "Failed to find download URL for Linux_${ARCH}"
+        log_debug "Available assets:"
+        echo "$release_json" | grep '"name"' | grep -E "Linux|linux" | head -5
         return 1
     fi
 
@@ -259,29 +267,54 @@ download_binary() {
         return 1
     fi
 
-    local temp_file="/tmp/${BINARY_NAME}-${VERSION}"
+    local temp_archive="/tmp/${BINARY_NAME}-${VERSION}.tar.gz"
+    local temp_dir="/tmp/${BINARY_NAME}-${VERSION}-extract"
 
     if [[ "$DRY_RUN" == true ]]; then
         log_info "[DRY RUN] Would download from: $DOWNLOAD_URL"
-        log_info "[DRY RUN] Would save to: $temp_file"
+        log_info "[DRY RUN] Would extract to: $temp_dir"
         return 0
     fi
 
-    log_info "Downloading $VERSION for linux-${ARCH}"
+    log_info "Downloading $VERSION for Linux_${ARCH}"
 
-    if curl -L -o "$temp_file" "$DOWNLOAD_URL" --progress-bar; then
-        chmod +x "$temp_file"
+    # Download archive
+    if curl -L -o "$temp_archive" "$DOWNLOAD_URL" --progress-bar; then
+        log_debug "Archive downloaded, extracting..."
 
-        # Verify binary works
-        if "$temp_file" --version &>/dev/null; then
-            log_success "Binary downloaded and verified"
+        # Create temp directory and extract
+        mkdir -p "$temp_dir"
+        if tar -xzf "$temp_archive" -C "$temp_dir"; then
+            log_debug "Archive extracted successfully"
 
-            # Move to installation directory
-            mv "$temp_file" "$INSTALL_DIR/$BINARY_NAME"
-            log_success "Binary installed to $INSTALL_DIR/$BINARY_NAME"
+            # Find the binary (should be named 'dddns')
+            local binary_path="$temp_dir/$BINARY_NAME"
+            if [[ ! -f "$binary_path" ]]; then
+                log_error "Binary not found in archive"
+                ls -la "$temp_dir"
+                rm -rf "$temp_dir" "$temp_archive"
+                return 1
+            fi
+
+            # Make executable and verify
+            chmod +x "$binary_path"
+            if "$binary_path" --version &>/dev/null; then
+                log_success "Binary verified successfully"
+
+                # Move to installation directory
+                mv "$binary_path" "$INSTALL_DIR/$BINARY_NAME"
+                log_success "Binary installed to $INSTALL_DIR/$BINARY_NAME"
+
+                # Cleanup
+                rm -rf "$temp_dir" "$temp_archive"
+            else
+                log_error "Downloaded binary failed verification"
+                rm -rf "$temp_dir" "$temp_archive"
+                return 1
+            fi
         else
-            log_error "Downloaded binary failed verification"
-            rm -f "$temp_file"
+            log_error "Failed to extract archive"
+            rm -f "$temp_archive"
             return 1
         fi
     else

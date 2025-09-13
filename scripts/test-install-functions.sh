@@ -49,7 +49,7 @@ test_function() {
 
     if [[ "$STEP_MODE" == true ]]; then
         echo -e "${YELLOW}Press ENTER to run this test, 's' to skip, or 'q' to quit...${NC}"
-        read -r response
+        read -r response < /dev/tty
         case "$response" in
             s|S)
                 log_warning "Skipping $func_name"
@@ -72,7 +72,7 @@ test_function() {
             log_error "$func_name failed with exit code $?"
             if [[ "$STEP_MODE" == true ]]; then
                 echo -e "${YELLOW}Continue anyway? (y/N)${NC}"
-                read -r response
+                read -r response < /dev/tty
                 if [[ "$response" != "y" && "$response" != "Y" ]]; then
                     exit 1
                 fi

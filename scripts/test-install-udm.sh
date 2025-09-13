@@ -29,7 +29,7 @@ print_error() { echo -e "${RED}[✗]${NC} $1"; }
 prompt_continue() {
     echo ""
     echo -e "${YELLOW}Press ENTER to continue to next step, or Ctrl+C to abort...${NC}"
-    read -r
+    read -r < /dev/tty
 }
 
 # Function to run a command with description

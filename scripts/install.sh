@@ -217,8 +217,8 @@ cat > /etc/cron.d/dddns << 'CRON'
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Update DNS every 30 minutes
-*/30 * * * * root /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+# Update DNS every 30 minutes (with timestamp for visibility)
+*/30 * * * * root echo "[$(date '+\%Y-\%m-\%d \%H:\%M:\%S')] Running dddns update..." >> /var/log/dddns.log && /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
 CRON
 
 # Restart cron
@@ -290,8 +290,8 @@ setup_cron() {
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Update DNS every 30 minutes
-*/30 * * * * root /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+# Update DNS every 30 minutes (with timestamp for visibility)
+*/30 * * * * root echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running dddns update..." >> /var/log/dddns.log && /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
 EOF
 
     # Restart cron

@@ -1,6 +1,6 @@
 # Descoped Dynamic DNS - dddns
 
-Most home networks receive dynamic IP addresses from ISPs that change unpredictably, making remote access unreliable.
+Most home networks receive dynamic public IP addresses via DHCP lease from ISPs, which can change on lease renewal or connection reset.
 Dynamic DNS (DDNS) solves this by automatically updating DNS records when your IP changes, keeping your domain (like `home.example.com`) always pointing to your current IP.
 
 **dddns** is a lightweight, secure DDNS client specifically for AWS Route53, designed to run on resource-constrained devices like Ubiquiti Dream Machines.

@@ -31,12 +31,15 @@ var testSecureCmd = &cobra.Command{
 	RunE:  runTestSecure,
 }
 
+// init registers the secure command and its subcommands.
 func init() {
 	rootCmd.AddCommand(secureCmd)
 	secureCmd.AddCommand(enableSecureCmd)
 	secureCmd.AddCommand(testSecureCmd)
 }
 
+// runEnableSecure converts a plaintext config to encrypted storage.
+// It uses device-specific encryption keys on supported platforms (UDM).
 func runEnableSecure(_ *cobra.Command, _ []string) error {
 	// Determine paths
 	configPath := cfgFile
@@ -79,6 +82,8 @@ func runEnableSecure(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// runTestSecure verifies that device-specific encryption is working.
+// It performs encryption/decryption tests and displays device info.
 func runTestSecure(_ *cobra.Command, _ []string) error {
 	fmt.Println("=== Testing Device Encryption ===")
 	fmt.Println()

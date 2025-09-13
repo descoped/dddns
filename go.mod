@@ -1,4 +1,3 @@
-// Version: 1.0.0
 module github.com/descoped/dddns
 
 go 1.22

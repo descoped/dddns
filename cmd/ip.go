@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// checkProxy flag determines whether to check if IP is from a proxy/VPN.
 var checkProxy bool
 
 var ipCmd = &cobra.Command{
@@ -17,11 +18,14 @@ var ipCmd = &cobra.Command{
 	RunE:  runIP,
 }
 
+// init registers the ip command and its flags.
 func init() {
 	rootCmd.AddCommand(ipCmd)
 	ipCmd.Flags().BoolVar(&checkProxy, "check-proxy", false, "Check if IP is a proxy/VPN")
 }
 
+// runIP retrieves and displays the current public IP address.
+// Optionally checks if the IP is from a proxy/VPN when --check-proxy flag is used.
 func runIP(cmd *cobra.Command, _ []string) error {
 	// Get public IP
 	ip, err := myip.GetPublicIP()

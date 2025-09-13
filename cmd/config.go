@@ -14,9 +14,10 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Configuration command flags.
 var (
-	forceInit   bool
-	interactive bool
+	forceInit   bool // forceInit overwrites existing configuration
+	interactive bool // interactive enables interactive configuration setup
 )
 
 var configCmd = &cobra.Command{
@@ -39,6 +40,7 @@ var checkCmd = &cobra.Command{
 	RunE:  runConfigCheck,
 }
 
+// init registers the config command and its subcommands.
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(initCmd)
@@ -48,6 +50,8 @@ func init() {
 	initCmd.Flags().BoolVarP(&interactive, "interactive", "i", true, "Interactive configuration setup")
 }
 
+// runConfigInit creates or updates the configuration file.
+// It supports both interactive and non-interactive modes.
 func runConfigInit(_ *cobra.Command, _ []string) error {
 	// Determine config path
 	var configPath string
@@ -95,6 +99,8 @@ func maskKey(key string) string {
 	return key[:4] + "****" + key[len(key)-4:]
 }
 
+// runInteractiveConfig provides an interactive configuration wizard.
+// It guides users through setting up AWS credentials and DNS settings.
 func runInteractiveConfig(configPath string, exists bool) error {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -272,6 +278,8 @@ skip_proxy_check: %t       # Skip proxy/VPN detection
 	return nil
 }
 
+// runConfigCheck validates the configuration file and tests AWS connectivity.
+// It ensures all required settings are present and credentials are working.
 func runConfigCheck(_ *cobra.Command, _ []string) error {
 	// Load configuration
 	cfg, err := config.Load()

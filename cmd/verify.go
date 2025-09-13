@@ -21,10 +21,13 @@ var verifyCmd = &cobra.Command{
 	RunE:  runVerify,
 }
 
+// init registers the verify command.
 func init() {
 	rootCmd.AddCommand(verifyCmd)
 }
 
+// checkDNSServer queries a specific DNS server for the hostname and compares with expected IP.
+// It prints the result with visual indicators for match/mismatch.
 func checkDNSServer(hostname, server, expectedIP string) {
 	r := &net.Resolver{
 		PreferGo: true,
@@ -55,6 +58,11 @@ func checkDNSServer(hostname, server, expectedIP string) {
 	}
 }
 
+// runVerify performs DNS verification:
+// 1. Gets current public IP
+// 2. Queries Route53 for current DNS record
+// 3. Tests resolution from multiple DNS servers
+// 4. Reports propagation status
 func runVerify(_ *cobra.Command, _ []string) error {
 	// Load configuration
 	cfg, err := config.Load()

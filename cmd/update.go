@@ -31,6 +31,7 @@ This command is designed to be run from cron every 30 minutes.`,
 	RunE: runUpdate,
 }
 
+// init registers the update command and its flags.
 func init() {
 	rootCmd.AddCommand(updateCmd)
 
@@ -51,6 +52,11 @@ func logInfo(format string, args ...interface{}) {
 	}
 }
 
+// runUpdate executes the main update logic:
+// 1. Gets current public IP
+// 2. Checks against cached IP
+// 3. Updates Route53 if IP changed
+// 4. Handles dry-run mode for testing
 func runUpdate(_ *cobra.Command, _ []string) error {
 	// Load configuration
 	cfg, err := config.Load()

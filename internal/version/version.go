@@ -14,6 +14,7 @@ var BuildDate = "unknown"
 //go:embed VERSION
 var versionFile string
 
+// init initializes the version from embedded VERSION file if not set via ldflags.
 func init() {
 	// If Version wasn't set via ldflags, use the embedded VERSION file
 	if Version == "dev" || Version == "" {

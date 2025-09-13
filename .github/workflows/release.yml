@@ -1,0 +1,204 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: linux
+            arch: amd64
+            target: dddns-linux-amd64
+          - os: linux
+            arch: arm64
+            target: dddns-linux-arm64
+          - os: linux
+            arch: arm
+            target: dddns-linux-arm
+            goarm: 7
+
+          # macOS
+          - os: darwin
+            arch: amd64
+            target: dddns-darwin-amd64
+          - os: darwin
+            arch: arm64
+            target: dddns-darwin-arm64
+
+          # Windows
+          - os: windows
+            arch: amd64
+            target: dddns-windows-amd64.exe
+
+          # UDM/UDR specific (ARM64)
+          - os: linux
+            arch: arm64
+            target: dddns-udm
+            description: "Ubiquiti Dream Machine"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_SHORT=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "Building version: ${VERSION}"
+
+      - name: Update VERSION file
+        run: |
+          echo "${{ steps.version.outputs.VERSION_SHORT }}" > internal/version/VERSION
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X github.com/descoped/dddns/internal/version.Version=${{ steps.version.outputs.VERSION_SHORT }} -X github.com/descoped/dddns/internal/version.BuildDate=${BUILD_DATE}"
+
+          go build -ldflags "${LDFLAGS}" -o dist/${{ matrix.target }} .
+
+          # Create checksums
+          cd dist
+          sha256sum ${{ matrix.target }} > ${{ matrix.target }}.sha256
+
+          # Make Linux/macOS binaries executable
+          if [ "${{ matrix.os }}" != "windows" ]; then
+            chmod +x ${{ matrix.target }}
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: dist/*
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries
+          path: dist
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION_SHORT=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          cat << EOF > release_notes.md
+          ## dddns ${VERSION}
+
+          ### Installation
+
+          #### Ubiquiti Dream Machine (UDM/UDR)
+          \`\`\`bash
+          curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+          \`\`\`
+
+          #### Linux
+          \`\`\`bash
+          # AMD64
+          curl -L -o dddns https://github.com/descoped/dddns/releases/download/${VERSION}/dddns-linux-amd64
+          chmod +x dddns
+          sudo mv dddns /usr/local/bin/
+
+          # ARM64
+          curl -L -o dddns https://github.com/descoped/dddns/releases/download/${VERSION}/dddns-linux-arm64
+          chmod +x dddns
+          sudo mv dddns /usr/local/bin/
+          \`\`\`
+
+          #### macOS
+          \`\`\`bash
+          # Intel
+          curl -L -o dddns https://github.com/descoped/dddns/releases/download/${VERSION}/dddns-darwin-amd64
+          chmod +x dddns
+          sudo mv dddns /usr/local/bin/
+
+          # Apple Silicon
+          curl -L -o dddns https://github.com/descoped/dddns/releases/download/${VERSION}/dddns-darwin-arm64
+          chmod +x dddns
+          sudo mv dddns /usr/local/bin/
+          \`\`\`
+
+          #### Windows
+          Download \`dddns-windows-amd64.exe\` from the assets below.
+
+          ### Checksums
+          All binaries include SHA256 checksums for verification.
+
+          ### Documentation
+          - [Quick Start Guide](https://github.com/descoped/dddns/blob/main/docs/QUICK_START.md)
+          - [Configuration Guide](https://github.com/descoped/dddns/blob/main/docs/CONFIGURATION.md)
+          - [UDM Installation Guide](https://github.com/descoped/dddns/blob/main/docs/UDM_GUIDE.md)
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: dddns ${{ steps.version.outputs.VERSION }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update install script version
+        run: |
+          # This ensures the install script always pulls the latest release
+          echo "Install script will automatically fetch the latest release"

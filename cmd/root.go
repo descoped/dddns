@@ -29,6 +29,7 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+// init initializes the root command with global flags and configuration.
 func init() {
 	cobra.OnInitialize(initConfig)
 
@@ -53,6 +54,9 @@ func checkConfigPermissions(path string) error {
 	return nil
 }
 
+// initConfig reads in config file and ENV variables if set.
+// It handles both regular YAML configs and encrypted .secure configs.
+// Priority: command-line flag > secure config > regular config.
 func initConfig() {
 	if cfgFile != "" {
 		// Use config file from the flag

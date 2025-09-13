@@ -30,6 +30,7 @@ func GetPublicIP() (string, error) {
 	return strings.Trim(string(body), "\n"), nil
 }
 
+// geoLocation represents the response from ip-api.com for proxy detection.
 type geoLocation struct {
 	//query  string `json:"query"`
 	//status string `json:"status"`
@@ -60,6 +61,7 @@ func IsProxyIP(ip *string) (bool, error) {
 	return location.Proxy, nil
 }
 
+// toJSON unmarshals the JSON response into a geoLocation struct.
 func toJSON(body []byte) (geoLocation, error) {
 	var location geoLocation
 	if err := json.Unmarshal(body, &location); err != nil {

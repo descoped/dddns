@@ -5,6 +5,47 @@ All notable changes to dddns will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.1] - 2025-09-14
+
+### 🐛 Bug Fixes
+- Fixed invalid 'go' configuration option in renovate.json (should be 'golang')
+- Fixed interactive prompts when piping install script through curl (uses `/dev/tty`)
+- Fixed UniFi OS v4 detection for UDR and newer UDM devices
+- Fixed download detection for GoReleaser tar.gz archive format
+- Fixed wrapper scripts for proper interactive execution
+
+### ✨ Features
+- Added UniFi OS v4 support for UDR and newer UDM devices
+- Added interactive prompts to install script for better user experience
+- Improved cron job logging visibility (removed --quiet flag)
+
+### 📚 Documentation
+- Updated all install script references from `install-dddns-udm.sh` to `install.sh`
+- Added comprehensive feature list to README
+- Added clear DDNS problem statement to README introduction
+- Added mermaid flow diagram showing dddns update process
+- Added Route53 pricing information (~$0.50/month)
+- Improved technical language for ISP DHCP lease description
+- Added MIT license and contribution guidelines
+
+### 🔧 Improvements
+- Consolidated multiple UDM install scripts into single `install.sh`
+- Added comprehensive test harness for install.sh functions
+- Removed .mcp.json from tracking
+
+### ⬆️ Dependencies
+- Updated Go to 1.25
+- Updated github.com/spf13/cobra to v1.10.1
+- Updated github.com/spf13/viper to v1.21.0
+- Updated GitHub Actions workflows
+- Migrated and fixed Renovate configuration
+
+### 📊 Statistics
+- **Commits since v0.1.0**: 26
+- **Files changed**: 13
+- **Additions**: 471 lines
+- **Deletions**: 226 lines
+
 ## [v0.1.0] - 2025-09-13
 
 ### 🎉 Initial Release

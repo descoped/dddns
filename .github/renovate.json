@@ -1,0 +1,79 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergePatch",
+    ":automergeMinor",
+    "schedule:weekly"
+  ],
+  "golang": {
+    "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
+  },
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "packageRules": [
+    {
+      "description": "Automatically merge minor and patch updates for Go modules",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Group AWS SDK updates",
+      "matchPackagePatterns": ["^github.com/aws/aws-sdk-go"],
+      "groupName": "AWS SDK"
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Require approval for major Go version updates",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["go"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Group test dependencies",
+      "matchPackagePatterns": ["^github.com/stretchr/testify"],
+      "groupName": "Test dependencies"
+    }
+  ],
+  "prConcurrentLimit": 3,
+  "prCreation": "immediate",
+  "labels": ["dependencies", "renovate"],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "semanticCommitScope": "deps",
+  "semanticCommitType": "chore",
+  "commitMessagePrefix": "⬆️",
+  "commitMessageAction": "update",
+  "commitMessageTopic": "{{depName}}",
+  "commitBodyTable": true,
+  "rangeStrategy": "auto",
+  "go": {
+    "ignoredVersions": ["^1.23", "^1.24"],
+    "enabled": true
+  },
+  "ignorePaths": [
+    "**/vendor/**",
+    "**/testdata/**"
+  ],
+  "platformAutomerge": true,
+  "timezone": "UTC",
+  "schedule": ["after 10pm every weekday", "before 5am every weekday", "every weekend"],
+  "assignees": [],
+  "reviewers": [],
+  "rebaseWhen": "behind-base-branch",
+  "minimumReleaseAge": "3 days"
+}

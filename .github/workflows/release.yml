@@ -47,6 +47,9 @@ jobs:
           - os: windows
             arch: amd64
             target: dddns-windows-amd64.exe
+          - os: windows
+            arch: arm64
+            target: dddns-windows-arm64.exe
 
           # UDM/UDR specific (ARM64)
           - os: linux

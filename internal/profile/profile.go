@@ -42,7 +42,7 @@ var (
 		DeviceIDPath: "/sys/class/net/eth0/address",
 	}
 
-	// macOS profile
+	// MacOS profile
 	MacOS = Profile{
 		Name:         "macos",
 		DataDir:      "$HOME/.dddns",
@@ -127,6 +127,7 @@ func (p *Profile) GetDataDir() string {
 	default:
 		return p.DataDir
 	}
+}
 
 // GetConfigPath returns the full config file path
 func (p *Profile) GetConfigPath() string {

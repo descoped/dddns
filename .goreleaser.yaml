@@ -1,0 +1,112 @@
+# .goreleaser.yaml
+project_name: dddns
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: dddns
+    main: .
+    binary: dddns
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: windows
+        goarch: arm
+    ldflags:
+      - -s -w
+      - -X github.com/descoped/dddns/internal/version.Version={{.Version}}
+      - -X github.com/descoped/dddns/internal/version.BuildDate={{.Date}}
+      - -X github.com/descoped/dddns/internal/version.Commit={{.FullCommit}}
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - docs/README.md
+      - docs/QUICK_START.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'Features'
+      regexp: '^feat'
+    - title: 'Bug Fixes'
+      regexp: '^fix'
+    - title: 'Performance'
+      regexp: '^perf'
+
+release:
+  github:
+    owner: descoped
+    name: dddns
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## dddns {{.Tag}} ({{.Date}})
+  footer: |
+    ## Installation
+
+    ### Ubiquiti Dream Machine (UDM/UDR)
+    ```bash
+    curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+    ```
+
+    ### macOS/Linux
+    ```bash
+    brew install descoped/tap/dddns
+    ```
+
+    ### Manual
+    Download the appropriate binary from the assets below.
+
+nfpms:
+  - id: packages
+    package_name: dddns
+    vendor: Descoped
+    homepage: https://github.com/descoped/dddns
+    maintainer: Descoped <support@descoped.com>
+    description: Dynamic DNS updater for AWS Route53
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    dependencies:
+      - ca-certificates

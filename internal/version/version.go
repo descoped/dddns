@@ -1,26 +1,13 @@
 package version
 
-import (
-	_ "embed"
-	"strings"
-)
-
-// Version is set at build time via ldflags, or embedded from VERSION file
+// Version is set at build time via ldflags
 var Version = "dev"
 
 // BuildDate is set at build time via ldflags
 var BuildDate = "unknown"
 
-//go:embed VERSION
-var versionFile string
-
-// init initializes the version from embedded VERSION file if not set via ldflags.
-func init() {
-	// If Version wasn't set via ldflags, use the embedded VERSION file
-	if Version == "dev" || Version == "" {
-		Version = strings.TrimSpace(versionFile)
-	}
-}
+// Commit is set at build time via ldflags
+var Commit = "none"
 
 // GetVersion returns the current version
 func GetVersion() string {

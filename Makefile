@@ -1,6 +1,6 @@
 # Variables
 BINARY_NAME=dddns
-VERSION=$(shell cat internal/version/VERSION 2>/dev/null || echo "dev")
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X github.com/descoped/dddns/internal/version.Version=${VERSION} -X github.com/descoped/dddns/internal/version.BuildDate=${BUILD_DATE} -s -w"
 GO_BUILD=CGO_ENABLED=0 go build ${LDFLAGS}

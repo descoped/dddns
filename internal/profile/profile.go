@@ -38,7 +38,7 @@ var (
 		ConfigPerm:   constants.ConfigFilePerm,
 		SecurePerm:   constants.SecureConfigPerm,
 		DirPerm:      constants.ConfigDirPerm,
-		UseHardwareID: false,
+		UseHardwareID: true, // Uses MAC address
 		DeviceIDPath: "/sys/class/net/eth0/address",
 	}
 
@@ -49,8 +49,8 @@ var (
 		ConfigPerm:   constants.ConfigFilePerm,
 		SecurePerm:   constants.SecureConfigPerm,
 		DirPerm:      constants.ConfigDirPerm,
-		UseHardwareID: false,
-		DeviceIDPath: "", // Use hostname only
+		UseHardwareID: true, // Uses hardware UUID or serial number
+		DeviceIDPath: "system_profiler", // Command-based retrieval
 	}
 
 	// Docker container profile
@@ -60,7 +60,7 @@ var (
 		ConfigPerm:   constants.ConfigFilePerm,
 		SecurePerm:   constants.SecureConfigPerm,
 		DirPerm:      constants.CacheDirPerm,
-		UseHardwareID: false,
+		UseHardwareID: true, // Uses container ID
 		DeviceIDPath: "/proc/self/cgroup",
 	}
 
@@ -71,8 +71,8 @@ var (
 		ConfigPerm:   0600,
 		SecurePerm:   0400,
 		DirPerm:      0700,
-		UseHardwareID: false,
-		DeviceIDPath: "", // Use hostname only
+		UseHardwareID: true, // Uses machine GUID or hardware UUID
+		DeviceIDPath: "wmic", // Command-based retrieval
 	}
 )
 

@@ -123,7 +123,7 @@ install_unifios_utilities() {
 
 # Get latest release version
 get_latest_version() {
-    log_info "Fetching latest version..."
+    log_info "Fetching latest version..." >&2
     local version=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | \
                     grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 

@@ -117,6 +117,8 @@ graph LR
 
 The flow ensures minimal API calls and only updates DNS when necessary, making it efficient and ISP-friendly.
 
+> **💡 Cost Tip**: The cost of a Hosted Zone in Amazon Route 53 is (as of the latest published pricing) US$ 0.50 per month for each of the first 25 hosted zones. This makes dddns an extremely cost-effective solution for home DNS management.
+
 ## Development
 
 ### Prerequisites

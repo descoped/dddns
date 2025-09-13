@@ -133,8 +133,8 @@ check_udm() {
             cat /etc/unifi-os/unifi-os.conf | head -5
         fi
         return 0
-    # Check for UniFi OS v4 (newer UDM/UDR)
-    elif [[ -d /etc/unifi-core ]] || [[ -d /data/unifi ]]; then
+    # Check for UniFi OS v4 (newer UDM/UDR) - check directory OR default file
+    elif [[ -d /etc/unifi-core ]] || [[ -f /etc/default/unifi ]]; then
         log_success "Running on Ubiquiti Dream Machine (UniFi OS v4)"
         if [[ "$VERBOSE" == true && -f /usr/lib/version ]]; then
             log_debug "Version info:"
@@ -148,6 +148,10 @@ check_udm() {
             log_debug "Board info:"
             cat /etc/board.info | head -5
         fi
+        return 0
+    # Final check - if /data exists and has unifi directories
+    elif [[ -d /data ]] && [[ -d /data/unifi ]]; then
+        log_success "Running on Ubiquiti device (detected via /data/unifi)"
         return 0
     else
         log_error "Not running on a Ubiquiti Dream Machine"

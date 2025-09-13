@@ -69,10 +69,12 @@ check_udm() {
     # Detect UniFi OS version
     if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
         log_info "Detected UniFi OS v3 (UDM)"
-    elif [[ -d /etc/unifi-core ]] || [[ -d /data/unifi ]]; then
+    elif [[ -d /etc/unifi-core ]] || [[ -f /etc/default/unifi ]]; then
         log_info "Detected UniFi OS v4 (UDM/UDR)"
     elif [[ -f /etc/board.info ]]; then
-        log_info "Detected Ubiquiti device"
+        log_info "Detected Ubiquiti device (via board.info)"
+    elif [[ -d /data/unifi ]]; then
+        log_info "Detected Ubiquiti device (via /data/unifi)"
     else
         log_warning "Could not determine UniFi OS version, but /data exists - continuing"
     fi

@@ -139,19 +139,45 @@ install_binary() {
     # Create installation directory
     mkdir -p "${INSTALL_DIR}"
 
-    # Download binary (use UDM-specific build for ARM64)
-    local binary_name="dddns-linux-${ARCH}"
-    if [[ "${ARCH}" == "arm64" ]]; then
-        # Try UDM-specific build first, fallback to generic Linux ARM64
-        binary_name="dddns-udm"
+    # Download archive (GoReleaser format)
+    local archive_name="dddns_Linux_${ARCH}.tar.gz"
+    if [[ "${ARCH}" == "arm" ]]; then
+        archive_name="dddns_Linux_armv7.tar.gz"
     fi
-    local url="https://github.com/${GITHUB_REPO}/releases/download/${version}/${binary_name}"
-    if curl -L -o "${INSTALL_DIR}/${BINARY_NAME}.tmp" "$url"; then
-        chmod +x "${INSTALL_DIR}/${BINARY_NAME}.tmp"
-        mv "${INSTALL_DIR}/${BINARY_NAME}.tmp" "${INSTALL_DIR}/${BINARY_NAME}"
-        log_success "Binary downloaded and installed"
+
+    local url="https://github.com/${GITHUB_REPO}/releases/download/${version}/${archive_name}"
+    local temp_archive="/tmp/dddns-${version}.tar.gz"
+    local temp_dir="/tmp/dddns-${version}-extract"
+
+    log_info "Downloading from: ${url}"
+
+    if curl -L -o "${temp_archive}" "$url" --progress-bar; then
+        log_info "Extracting archive..."
+
+        # Create temp directory and extract
+        mkdir -p "${temp_dir}"
+        if tar -xzf "${temp_archive}" -C "${temp_dir}"; then
+            # Find and move the binary
+            if [[ -f "${temp_dir}/${BINARY_NAME}" ]]; then
+                chmod +x "${temp_dir}/${BINARY_NAME}"
+                mv "${temp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+                log_success "Binary installed successfully"
+
+                # Cleanup
+                rm -rf "${temp_dir}" "${temp_archive}"
+            else
+                log_error "Binary not found in archive"
+                ls -la "${temp_dir}"
+                rm -rf "${temp_dir}" "${temp_archive}"
+                exit 1
+            fi
+        else
+            log_error "Failed to extract archive"
+            rm -f "${temp_archive}"
+            exit 1
+        fi
     else
-        log_error "Failed to download binary"
+        log_error "Failed to download from ${url}"
         exit 1
     fi
 

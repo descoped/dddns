@@ -2,6 +2,7 @@
 
 Most home networks receive dynamic IP addresses from ISPs that change unpredictably, making remote access unreliable.
 Dynamic DNS (DDNS) solves this by automatically updating DNS records when your IP changes, keeping your domain (like `home.example.com`) always pointing to your current IP.
+
 **dddns** is a lightweight, secure DDNS client specifically for AWS Route53, designed to run on resource-constrained devices like Ubiquiti Dream Machines.
 Perfect for VPN access, home servers, remote management, or any service that needs consistent access to your home network.
 
@@ -40,9 +41,6 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 - **One-Line Installation** - Simple curl install for UDM
 - **Logging** - Comprehensive logs with rotation
 
-## Limitations
-
-⚠️ **AWS Route53 Only** - This tool is specifically designed for AWS Route53. Other DNS providers are not supported.
 
 ## Quick Start
 
@@ -94,6 +92,30 @@ dddns --version                                # Show version
 - [Commands](docs/COMMANDS.md) - Full command reference
 - [UDM Guide](docs/UDM_GUIDE.md) - Ubiquiti-specific setup
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
+
+## How It Works
+
+```mermaid
+graph LR
+    A[Cron Job<br/>Every 30 min] -->|Triggers| B[dddns update]
+    B --> C{Check Public IP<br/>checkip.amazonaws.com}
+    C --> D[Current IP:<br/>203.0.113.42]
+    D --> E{Compare with<br/>Cached IP}
+    E -->|IP Changed| F[Query Route53<br/>Current DNS Record]
+    E -->|No Change| G[Skip Update<br/>Exit]
+    F --> H{Verify Change<br/>Needed?}
+    H -->|Yes| I[Update Route53<br/>A Record]
+    H -->|No| G
+    I --> J[Cache New IP<br/>/data/.dddns/last-ip.txt]
+    J --> K[Log Result<br/>/var/log/dddns.log]
+    K --> L[Exit Success]
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style I fill:#9f9,stroke:#333,stroke-width:2px
+    style G fill:#ff9,stroke:#333,stroke-width:2px
+```
+
+The flow ensures minimal API calls and only updates DNS when necessary, making it efficient and ISP-friendly.
 
 ## Development
 

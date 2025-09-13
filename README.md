@@ -1,6 +1,9 @@
 # Descoped Dynamic DNS - dddns
 
-A lightweight, secure CLI tool for updating AWS Route53 DNS A records with dynamic IP addresses. Designed for resource-constrained devices like Ubiquiti Dream Machines.
+Most home networks receive dynamic IP addresses from ISPs that change unpredictably, making remote access unreliable.
+Dynamic DNS (DDNS) solves this by automatically updating DNS records when your IP changes, keeping your domain (like `home.example.com`) always pointing to your current IP.
+**dddns** is a lightweight, secure DDNS client specifically for AWS Route53, designed to run on resource-constrained devices like Ubiquiti Dream Machines.
+Perfect for VPN access, home servers, remote management, or any service that needs consistent access to your home network.
 
 ## Features
 

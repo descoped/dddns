@@ -179,7 +179,9 @@ tests/               # Integration tests
 
 ## Version History
 
+- **v0.1.1** (2025-09-14) - Bug fixes, UniFi OS v4 support, documentation improvements
 - **v0.1.0** (2025-09-13) - Initial release with core functionality
 
-[Unreleased]: https://github.com/descoped/dddns/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/descoped/dddns/compare/v0.1.1...HEAD
+[v0.1.1]: https://github.com/descoped/dddns/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/descoped/dddns/releases/tag/v0.1.0

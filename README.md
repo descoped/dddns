@@ -96,16 +96,18 @@ dddns --version                                # Show version
 ## How It Works
 
 ```mermaid
-graph LR
+graph TB
     A[Cron Job<br/>Every 30 min] -->|Triggers| B[dddns update]
     B --> C{Check Public IP<br/>checkip.amazonaws.com}
     C --> D[Current IP:<br/>203.0.113.42]
+
     D --> E{Compare with<br/>Cached IP}
-    E -->|IP Changed| F[Query Route53<br/>Current DNS Record]
     E -->|No Change| G[Skip Update<br/>Exit]
+    E -->|IP Changed| F[Query Route53<br/>Current DNS Record]
+
     F --> H{Verify Change<br/>Needed?}
-    H -->|Yes| I[Update Route53<br/>A Record]
     H -->|No| G
+    H -->|Yes| I[Update Route53<br/>A Record]
     I --> J[Cache New IP<br/>/data/.dddns/last-ip.txt]
     J --> K[Log Result<br/>/var/log/dddns.log]
     K --> L[Exit Success]
@@ -117,7 +119,7 @@ graph LR
 
 The flow ensures minimal API calls and only updates DNS when necessary, making it efficient and ISP-friendly.
 
-> **💡 Cost Tip**: The cost of a Hosted Zone in Amazon Route 53 is (as of the latest published pricing) US$ 0.50 per month for each of the first 25 hosted zones. This makes dddns an extremely cost-effective solution for home DNS management.
+> **💡 Cost Tip**: Running your own dynamic DNS with AWS Route53 costs approximately USD 0.50 per month for a hosted zone. This makes dddns a very affordable solution for reliable home network access.
 
 ## Development
 

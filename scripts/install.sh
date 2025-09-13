@@ -257,8 +257,9 @@ EOF
 
 # Create default configuration
 create_default_config() {
-    if [[ -f "${CONFIG_DIR}/config.yaml" ]]; then
-        log_info "Configuration already exists"
+    # Check if any configuration exists (upgrade scenario)
+    if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
+        log_info "Existing configuration detected - preserving user settings"
         return 0
     fi
 
@@ -386,16 +387,31 @@ main() {
         exit 0
     fi
 
+    # Detect if this is an upgrade
+    local is_upgrade=false
+    if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
+        is_upgrade=true
+    fi
+
     # Show installation plan and get confirmation (unless --force)
     if [[ "$force" != "true" ]]; then
         echo ""
-        log_info "Installation Plan:"
-        echo "  • Install dddns binary to: /data/dddns/"
-        echo "  • Create symlink at: /usr/local/bin/dddns"
-        echo "  • Set up boot persistence in: /data/on_boot.d/"
-        echo "  • Configure cron job to run every 30 minutes"
-        echo "  • Create config directory at: /data/.dddns/"
-        echo "  • Log output to: /var/log/dddns.log"
+        if [[ "$is_upgrade" == "true" ]]; then
+            log_info "Upgrade detected - existing configuration will be preserved"
+            log_info "Upgrade Plan:"
+            echo "  • Update dddns binary in: /data/dddns/"
+            echo "  • Update symlink at: /usr/local/bin/dddns"
+            echo "  • Update boot persistence script"
+            echo "  • Preserve existing configuration"
+        else
+            log_info "Installation Plan:"
+            echo "  • Install dddns binary to: /data/dddns/"
+            echo "  • Create symlink at: /usr/local/bin/dddns"
+            echo "  • Set up boot persistence in: /data/on_boot.d/"
+            echo "  • Configure cron job to run every 30 minutes"
+            echo "  • Create config directory at: /data/.dddns/"
+            echo "  • Log output to: /var/log/dddns.log"
+        fi
         echo ""
         echo -n "Proceed with installation? [Y/n]: "
         read -r response </dev/tty || response="y"
@@ -438,14 +454,27 @@ main() {
     # Final instructions
     echo ""
     echo "======================================"
-    echo "  Installation Complete!"
+    if [[ "$is_upgrade" == "true" ]]; then
+        echo "  Upgrade Complete!"
+    else
+        echo "  Installation Complete!"
+    fi
     echo "======================================"
     echo ""
-    echo "Next steps:"
-    echo "1. Edit configuration: vi ${CONFIG_DIR}/config.yaml"
-    echo "2. Add your AWS credentials and Route53 settings"
-    echo "3. Test: dddns update --dry-run"
-    echo "4. Monitor: tail -f ${LOG_FILE}"
+
+    if [[ "$is_upgrade" == "true" ]]; then
+        echo "Your existing configuration has been preserved."
+        echo ""
+        echo "Next steps:"
+        echo "1. Test: dddns update --dry-run"
+        echo "2. Monitor: tail -f ${LOG_FILE}"
+    else
+        echo "Next steps:"
+        echo "1. Edit configuration: vi ${CONFIG_DIR}/config.yaml"
+        echo "2. Add your AWS credentials and Route53 settings"
+        echo "3. Test: dddns update --dry-run"
+        echo "4. Monitor: tail -f ${LOG_FILE}"
+    fi
     echo ""
     echo "The cron job will run every 30 minutes automatically."
     echo "Logs are rotated automatically when they exceed 10MB."

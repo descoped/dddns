@@ -1,58 +1,86 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
+    "config:recommended",
     ":dependencyDashboard",
     ":semanticCommits",
     ":automergePatch",
     ":automergeMinor",
     "schedule:weekly"
   ],
-  "golang": {
-    "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
-  },
   "postUpdateOptions": [
     "gomodTidy"
   ],
   "packageRules": [
     {
+      "matchCategories": [
+        "golang"
+      ],
+      "postUpdateOptions": [
+        "gomodTidy",
+        "gomodUpdateImportPaths"
+      ]
+    },
+    {
       "description": "Automatically merge minor and patch updates for Go modules",
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "Group AWS SDK updates",
-      "matchPackagePatterns": ["^github.com/aws/aws-sdk-go"],
-      "groupName": "AWS SDK"
+      "groupName": "AWS SDK",
+      "matchPackageNames": [
+        "/^github.com/aws/aws-sdk-go/"
+      ]
     },
     {
       "description": "Group GitHub Actions updates",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "GitHub Actions",
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "Require approval for major Go version updates",
-      "matchManagers": ["gomod"],
-      "matchPackageNames": ["go"],
-      "matchUpdateTypes": ["major"],
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchPackageNames": [
+        "go"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false
     },
     {
       "description": "Group test dependencies",
-      "matchPackagePatterns": ["^github.com/stretchr/testify"],
-      "groupName": "Test dependencies"
+      "groupName": "Test dependencies",
+      "matchPackageNames": [
+        "/^github.com/stretchr/testify/"
+      ]
     }
   ],
   "prConcurrentLimit": 3,
   "prCreation": "immediate",
-  "labels": ["dependencies", "renovate"],
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
   "vulnerabilityAlerts": {
     "enabled": true,
-    "labels": ["security"]
+    "labels": [
+      "security"
+    ]
   },
   "semanticCommitScope": "deps",
   "semanticCommitType": "chore",
@@ -67,7 +95,11 @@
   ],
   "platformAutomerge": true,
   "timezone": "UTC",
-  "schedule": ["after 10pm every weekday", "before 5am every weekday", "every weekend"],
+  "schedule": [
+    "after 10pm every weekday",
+    "before 5am every weekday",
+    "every weekend"
+  ],
   "assignees": [],
   "reviewers": [],
   "rebaseWhen": "behind-base-branch",

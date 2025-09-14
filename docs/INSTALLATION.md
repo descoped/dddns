@@ -13,14 +13,16 @@ This guide covers installation methods for all supported platforms.
 
 ### Supported Models
 
-| Model | Full Name | OS Version | Processor | Architecture | Tested |
-|-------|-----------|------------|-----------|--------------|--------|
-| UDM | Dream Machine | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
-| UDM-Pro | Dream Machine Pro | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
-| UDM-SE | Dream Machine SE | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
-| UDM Pro Max | Dream Machine Pro Max | UniFi OS 3.x/4.x | ARM Cortex-A57 (2.0 GHz, 4-core) | ARM64 (RISC) | ❌ |
-| UDR | Dream Router | UniFi OS 3.x/4.x | ARM (1.35 GHz, 2-core) | ARM64 (RISC) | ❌ |
-| UDR7 | Dream Router 7 | UniFi OS 4.x | ARM (Wi-Fi 7 capable) | ARM64 (RISC) | ✅ |
+| Model | Full Name | OS Version | Processor | Tested |
+|-------|-----------|------------|-----------|--------|
+| UDM | Dream Machine | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ❌ |
+| UDM-Pro | Dream Machine Pro | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ❌ |
+| UDM-SE | Dream Machine SE | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ❌ |
+| UDM Pro Max | Dream Machine Pro Max | UniFi OS 3.x/4.x | ARM Cortex-A57 (2.0 GHz, 4-core) | ❌ |
+| UDR | Dream Router | UniFi OS 3.x/4.x | ARM (1.35 GHz, 2-core) | ❌ |
+| UDR7 | Dream Router 7 | UniFi OS 4.x | ARM (Wi-Fi 7 capable) | ✅ |
+
+**Architecture**: All models use ARM64 (aarch64) 64-bit processors with Little Endian byte ordering.
 
 > **⚠️ Important Disclaimer**: Only the UDR7 (Dream Router 7) has been fully tested. While other models should work due to similar architecture, users should proceed with caution and verify compatibility on their specific device.
 

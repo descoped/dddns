@@ -52,6 +52,8 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 
 ## Quick Start
 
+> **📋 Prerequisites**: Need to set up AWS Route53 first? See the [AWS Setup Guide](docs/AWS_SETUP.md) for step-by-step instructions.
+
 ### Ubiquiti Dream Machine (UDM/UDR)
 
 ```bash
@@ -121,8 +123,9 @@ dddns --version                                # Show version
 
 ## Documentation
 
-- [Installation Guide](docs/INSTALLATION.md) - Detailed installation instructions
 - [Quick Start](docs/QUICK_START.md) - Get running in 5 minutes
+- [AWS Setup Guide](docs/AWS_SETUP.md) - **Start here if new to Route53** - Complete AWS setup
+- [Installation Guide](docs/INSTALLATION.md) - Detailed installation instructions
 - [Configuration](docs/CONFIGURATION.md) - Configuration options
 - [Commands](docs/COMMANDS.md) - Full command reference
 - [UDM Guide](docs/UDM_GUIDE.md) - Ubiquiti-specific setup
@@ -215,12 +218,14 @@ GitHub Actions automatically builds and releases binaries for all platforms.
 
 ## Configuration
 
+> **Need AWS Route53?** Follow the [AWS Setup Guide](docs/AWS_SETUP.md) to create your hosted zone and IAM credentials first.
+
 ### Example Configuration
 
 ```yaml
 # ~/.dddns/config.yaml
 aws_region: us-east-1
-hosted_zone_id: ZXXXXXXXXXXXXX
+hosted_zone_id: ZXXXXXXXXXXXXX  # Get this from AWS Setup Guide
 hostname: home.example.com
 ttl: 300
 
@@ -295,22 +300,6 @@ We welcome contributions! Whether it's bug fixes, new features, or documentation
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-```
-MIT License
-
-Copyright (c) 2025 Descoped
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction...
-```
-
-## Acknowledgments
-
-- Built for the Ubiquiti Dream Machine community
-- Inspired by the need for reliable dynamic DNS on resource-constrained devices
-- Thanks to all contributors and users who provide feedback and improvements
 
 ---
 

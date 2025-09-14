@@ -5,9 +5,10 @@ Welcome to the dddns documentation! This guide will help you install, configure,
 ## 📚 Documentation Structure
 
 ### Getting Started
+- [**Quick Start**](QUICK_START.md) - Get up and running in 5 minutes
+- [**AWS Setup Guide**](AWS_SETUP.md) - Complete guide for setting up Route53 and IAM
 - [**Installation Guide**](INSTALLATION.md) - How to install dddns on various platforms
 - [**Configuration Guide**](CONFIGURATION.md) - Setting up AWS credentials and DNS settings
-- [**Quick Start**](QUICK_START.md) - Get up and running in 5 minutes
 
 ### Platform-Specific Guides
 - [**Ubiquiti Dream Machine Guide**](UDM_GUIDE.md) - Complete guide for UDM/UDR devices

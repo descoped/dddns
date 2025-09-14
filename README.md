@@ -1,5 +1,12 @@
 # Descoped Dynamic DNS - dddns
 
+[![CI](https://github.com/descoped/dddns/actions/workflows/ci.yml/badge.svg)](https://github.com/descoped/dddns/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/descoped/dddns)](https://goreportcard.com/report/github.com/descoped/dddns)
+[![Release](https://img.shields.io/github/v/release/descoped/dddns)](https://github.com/descoped/dddns/releases)
+[![License](https://img.shields.io/github/license/descoped/dddns)](https://github.com/descoped/dddns/blob/main/LICENSE)
+[![Go Version](https://img.shields.io/badge/go-1.25-blue)](https://go.dev/)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows%20%7C%20arm-lightgrey)](https://github.com/descoped/dddns/releases)
+
 Most home networks receive dynamic public IP addresses via DHCP lease from ISPs, which can change on lease renewal or connection reset.
 Dynamic DNS (DDNS) solves this by automatically updating DNS records when your IP changes, keeping your domain (like `home.example.com`) always pointing to your current IP.
 

@@ -96,6 +96,39 @@ release:
     ### Manual
     Download the appropriate binary from the assets below.
 
+brews:
+  - name: dddns
+    repository:
+      owner: descoped
+      name: homebrew-tap
+      branch: main
+      # Token is required for publishing to another repository
+      # Set HOMEBREW_TAP_TOKEN in GitHub Actions secrets
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    folder: Formula
+    homepage: "https://github.com/descoped/dddns"
+    description: "Lightweight Dynamic DNS client for AWS Route53"
+    license: "MIT"
+    # Test block to verify installation
+    test: |
+      system "#{bin}/dddns", "--version"
+    # Dependencies if needed
+    dependencies:
+      - name: ca-certificates
+        type: optional
+    # Custom installation instructions
+    install: |
+      bin.install "dddns"
+    # Post-install message
+    caveats: |
+      To get started with dddns:
+        1. Create configuration: dddns config init
+        2. Edit configuration: vi ~/.dddns/config.yaml
+        3. Test: dddns update --dry-run
+
+      For automatic updates, add to crontab:
+        */30 * * * * /usr/local/bin/dddns update --quiet
+
 nfpms:
   - id: packages
     package_name: dddns

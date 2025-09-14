@@ -179,13 +179,18 @@ sudo journalctl -u dddns -f
 
 ## macOS
 
-### Homebrew (Coming Soon)
+### Homebrew
 
 ```bash
-# Install via Homebrew
-brew tap descoped/dddns
+# Install via Homebrew tap
+brew install descoped/tap/dddns
+
+# Or tap the repository first
+brew tap descoped/homebrew-tap
 brew install dddns
 ```
+
+**Note**: Requires the `descoped/homebrew-tap` repository to be created and the `HOMEBREW_TAP_TOKEN` secret to be configured in GitHub Actions.
 
 ### Binary Installation
 

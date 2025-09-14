@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code when working with dddns.
 
+## CRITICAL RULES - MUST READ
+
+**NEVER COMMIT WITHOUT EXPLICIT PERMISSION**
+- When the user says "do not commit" or indicates this is a planning/design session, you MUST NOT make any commits
+- Always wait for explicit approval before making design decisions or architectural changes
+- The developer (user) is the decision-maker - Claude Code is an assistant, not a decision-maker
+- Present options and recommendations, but let the user choose the approach
+- If in doubt, ASK before making changes
+
 ## Project Overview
 
 **dddns** (Descoped Dynamic DNS) is a lightweight CLI tool for updating AWS Route53 DNS A records with dynamic IP addresses. Originally created to replace a bash script on UDM7 routers, it has evolved into a cross-platform solution while maintaining its core simplicity.

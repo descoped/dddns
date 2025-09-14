@@ -90,7 +90,8 @@ release:
 
     ### macOS/Linux
     ```bash
-    brew install descoped/tap/dddns
+    brew tap descoped/dddns
+    brew install dddns
     ```
 
     ### Manual
@@ -101,8 +102,8 @@ nfpms:
     package_name: dddns
     vendor: Descoped
     homepage: https://github.com/descoped/dddns
-    maintainer: Descoped <support@descoped.com>
-    description: Dynamic DNS updater for AWS Route53
+    maintainer: Descoped <oranheim@descoped.io>
+    description: Lightweight Dynamic DNS client with multi-provider support
     license: MIT
     formats:
       - deb

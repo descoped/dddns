@@ -86,27 +86,39 @@ dddns config init
 
 ## Linux
 
-### Package Managers
+### Package Installation
 
-#### Debian/Ubuntu (Coming Soon)
+#### Debian/Ubuntu (.deb)
 ```bash
-# Add repository
-curl -fsSL https://pkg.dddns.io/gpg | sudo apt-key add -
-echo "deb https://pkg.dddns.io/apt stable main" | sudo tee /etc/apt/sources.list.d/dddns.list
+# Download the latest .deb package
+curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.deb
+# Or for ARM64: dddns_Linux_arm64.deb
 
 # Install
-sudo apt update
-sudo apt install dddns
+sudo dpkg -i dddns_Linux_x86_64.deb
+
+# Or in one command:
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.deb | sudo dpkg -i -
 ```
 
-#### Red Hat/CentOS (Coming Soon)
+#### Red Hat/CentOS/Fedora (.rpm)
 ```bash
-# Add repository
-sudo rpm --import https://pkg.dddns.io/rpm/gpg
-sudo curl -o /etc/yum.repos.d/dddns.repo https://pkg.dddns.io/rpm/dddns.repo
+# Download and install the latest .rpm package
+sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
+# Or for ARM64: dddns_Linux_arm64.rpm
+
+# For Fedora/RHEL 8+ you can also use dnf:
+sudo dnf install https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
+```
+
+#### Alpine Linux (.apk)
+```bash
+# Download the latest .apk package
+wget https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.apk
+# Or for ARM64: dddns_Linux_arm64.apk
 
 # Install
-sudo yum install dddns
+sudo apk add --allow-untrusted dddns_Linux_x86_64.apk
 ```
 
 ### Binary Installation
@@ -179,13 +191,21 @@ sudo journalctl -u dddns -f
 
 ## macOS
 
-### Homebrew (Coming Soon)
+### Homebrew
 
 ```bash
-# Install via Homebrew
+# Tap the repository and install
 brew tap descoped/dddns
 brew install dddns
+
+# Update to latest version
+brew upgrade dddns
+
+# Uninstall
+brew uninstall dddns
 ```
+
+> **Note**: The Homebrew formula is automatically updated with each release via GoReleaser.
 
 ### Binary Installation
 
@@ -281,6 +301,22 @@ services:
     environment:
       - DDDNS_CHECK_INTERVAL=30m
 ```
+
+## Homebrew Formula Maintenance
+
+For maintainers: After creating a new release, update the Homebrew formula:
+
+```bash
+# Update formula with new version (after GitHub release is published)
+make update-formula VERSION=vX.Y.Z
+
+# Commit and push the updated formula
+git add Formula/dddns.rb
+git commit -m "chore: update Formula to vX.Y.Z"
+git push origin main
+```
+
+The formula is located at `Formula/dddns.rb` and contains checksums for macOS binaries only.
 
 ## Building from Source
 

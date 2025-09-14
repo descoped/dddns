@@ -65,6 +65,8 @@ dddns config init
 dddns update --dry-run
 ```
 
+> **⚠️ Compatibility Note**: Check [supported models and requirements](docs/INSTALLATION.md#supported-models) before installation.
+
 ### macOS
 
 ```bash
@@ -86,8 +88,8 @@ curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_
 sudo dpkg -i dddns_Linux_x86_64.deb
 
 # For ARM64 systems:
-# curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.deb
-# sudo dpkg -i dddns_Linux_arm64.deb
+curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.deb
+sudo dpkg -i dddns_Linux_arm64.deb
 ```
 
 #### Red Hat/CentOS/Fedora
@@ -96,7 +98,7 @@ sudo dpkg -i dddns_Linux_x86_64.deb
 sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
 
 # For ARM64 systems:
-# sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.rpm
+sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.rpm
 ```
 
 #### Configure and run
@@ -287,8 +289,8 @@ We welcome contributions! Whether it's bug fixes, new features, or documentation
 - 📚 Documentation improvements
 - 🧪 Test coverage expansion
 - 🔧 Performance optimizations
-- 🌍 Internationalization
 - 🎨 Code refactoring
+- 🌐 Support for more DNS providers
 
 ## License
 

@@ -12,12 +12,19 @@ This guide covers installation methods for all supported platforms.
 ## Ubiquiti Dream Machine
 
 ### Supported Models
-- UDM (Dream Machine)
-- UDM-Pro
-- UDM-SE (Special Edition)
-- UDM Pro Max
-- UDR (Dream Router)
-- UDR7 (Dream Router 7)
+
+| Model | Full Name | OS Version | Processor | Architecture | Tested |
+|-------|-----------|------------|-----------|--------------|--------|
+| UDM | Dream Machine | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
+| UDM-Pro | Dream Machine Pro | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
+| UDM-SE | Dream Machine SE | UniFi OS 2.x/3.x | ARM Cortex-A57 (1.7 GHz, 4-core) | ARM64 (RISC) | ❌ |
+| UDM Pro Max | Dream Machine Pro Max | UniFi OS 3.x/4.x | ARM Cortex-A57 (2.0 GHz, 4-core) | ARM64 (RISC) | ❌ |
+| UDR | Dream Router | UniFi OS 3.x/4.x | ARM (1.35 GHz, 2-core) | ARM64 (RISC) | ❌ |
+| UDR7 | Dream Router 7 | UniFi OS 4.x | ARM (Wi-Fi 7 capable) | ARM64 (RISC) | ✅ |
+
+> **⚠️ Important Disclaimer**: Only the UDR7 (Dream Router 7) has been fully tested. While other models should work due to similar architecture, users should proceed with caution and verify compatibility on their specific device.
+
+> **📦 Boot Persistence Dependency**: All UniFi devices require [unifios-utilities](https://github.com/unifi-utilities/unifios-utilities) or manual `/data/on_boot.d/` setup for persistence across firmware updates. The installer will prompt to install this if not present.
 
 ### Automated Installation (Recommended)
 
@@ -38,16 +45,20 @@ The installer will:
 
 ```bash
 # Check environment only (no installation)
-curl -fsL [...]/install-on-unifi-os.sh | bash -s -- --check-only
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
+  bash -s -- --check-only
 
 # Install specific version
-curl -fsL [...]/install-on-unifi-os.sh | bash -s -- --version v1.0.0
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
+  bash -s -- --version v1.0.0
 
 # Force reinstall/upgrade
-curl -fsL [...]/install-on-unifi-os.sh | bash -s -- --force
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
+  bash -s -- --force
 
 # Uninstall
-curl -fsL [...]/install-on-unifi-os.sh | bash -s -- --uninstall
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
+  bash -s -- --uninstall
 ```
 
 ### Manual Installation
@@ -58,9 +69,9 @@ mkdir -p /data/dddns
 mkdir -p /data/.dddns
 mkdir -p /data/on_boot.d
 
-# 2. Download binary
-curl -L -o /data/dddns/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns-linux-arm64
+# 2. Download and extract binary
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.tar.gz | \
+  tar -xz -C /data/dddns dddns
 chmod +x /data/dddns/dddns
 
 # 3. Create symlink
@@ -90,35 +101,36 @@ dddns config init
 
 #### Debian/Ubuntu (.deb)
 ```bash
-# Download the latest .deb package
-curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.deb
-# Or for ARM64: dddns_Linux_arm64.deb
+# AMD64/x86_64
+curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_linux_amd64.deb
+sudo dpkg -i dddns_linux_amd64.deb
 
-# Install
-sudo dpkg -i dddns_Linux_x86_64.deb
-
-# Or in one command:
-curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.deb | sudo dpkg -i -
+# ARM64/aarch64
+curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_linux_arm64.deb
+sudo dpkg -i dddns_linux_arm64.deb
 ```
 
 #### Red Hat/CentOS/Fedora (.rpm)
 ```bash
-# Download and install the latest .rpm package
-sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
-# Or for ARM64: dddns_Linux_arm64.rpm
+# AMD64/x86_64
+sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_linux_amd64.rpm
 
-# For Fedora/RHEL 8+ you can also use dnf:
-sudo dnf install https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
+# ARM64/aarch64
+sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_linux_arm64.rpm
+
+# For Fedora/RHEL 8+ (using dnf):
+sudo dnf install https://github.com/descoped/dddns/releases/latest/download/dddns_linux_amd64.rpm
 ```
 
 #### Alpine Linux (.apk)
 ```bash
-# Download the latest .apk package
-wget https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.apk
-# Or for ARM64: dddns_Linux_arm64.apk
+# AMD64/x86_64
+wget https://github.com/descoped/dddns/releases/latest/download/dddns_linux_amd64.apk
+sudo apk add --allow-untrusted dddns_linux_amd64.apk
 
-# Install
-sudo apk add --allow-untrusted dddns_Linux_x86_64.apk
+# ARM64/aarch64
+wget https://github.com/descoped/dddns/releases/latest/download/dddns_linux_arm64.apk
+sudo apk add --allow-untrusted dddns_linux_arm64.apk
 ```
 
 ### Binary Installation
@@ -127,13 +139,14 @@ sudo apk add --allow-untrusted dddns_Linux_x86_64.apk
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
-    x86_64) ARCH="amd64" ;;
+    x86_64) ARCH="x86_64" ;;
     aarch64) ARCH="arm64" ;;
+    armv7l) ARCH="armv7" ;;
 esac
 
-# Download binary
-sudo curl -L -o /usr/local/bin/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns-linux-${ARCH}
+# Download and extract binary
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_${ARCH}.tar.gz | \
+  sudo tar -xz -C /usr/local/bin dddns
 
 # Make executable
 sudo chmod +x /usr/local/bin/dddns
@@ -205,7 +218,7 @@ brew upgrade dddns
 brew uninstall dddns
 ```
 
-> **Note**: The Homebrew formula is automatically updated with each release via GoReleaser.
+> **Note**: The Homebrew formula needs manual updating after each release using `make update-formula VERSION=vX.Y.Z`.
 
 ### Binary Installation
 
@@ -213,13 +226,13 @@ brew uninstall dddns
 # Detect architecture
 ARCH=$(uname -m)
 case $ARCH in
-    x86_64) ARCH="amd64" ;;
+    x86_64) ARCH="x86_64" ;;
     arm64) ARCH="arm64" ;;
 esac
 
-# Download binary
-sudo curl -L -o /usr/local/bin/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns-darwin-${ARCH}
+# Download and extract binary
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Darwin_${ARCH}.tar.gz | \
+  sudo tar -xz -C /usr/local/bin dddns
 
 # Make executable
 sudo chmod +x /usr/local/bin/dddns
@@ -336,8 +349,11 @@ cd dddns
 # Build for current platform
 make build
 
-# Build for all platforms
+# Build for UDM
 make build-udm
+
+# Build for all platforms
+make build-all
 
 # Install locally
 sudo make install
@@ -388,11 +404,27 @@ dddns update --dry-run
 curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --force
 ```
 
-### Linux/macOS
+### Linux
 ```bash
-# Download new binary
-sudo curl -L -o /usr/local/bin/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns-$(uname -s)-$(uname -m)
+# For package installations (deb/rpm/apk)
+# Re-download and install the latest package version
+
+# For binary installations
+ARCH=$(uname -m | sed 's/x86_64/x86_64/;s/aarch64/arm64/;s/armv7l/armv7/')
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_${ARCH}.tar.gz | \
+  sudo tar -xz -C /usr/local/bin dddns
+sudo chmod +x /usr/local/bin/dddns
+```
+
+### macOS
+```bash
+# Using Homebrew
+brew upgrade dddns
+
+# For binary installation
+ARCH=$(uname -m | sed 's/x86_64/x86_64/')
+curl -L https://github.com/descoped/dddns/releases/latest/download/dddns_Darwin_${ARCH}.tar.gz | \
+  sudo tar -xz -C /usr/local/bin dddns
 sudo chmod +x /usr/local/bin/dddns
 ```
 
@@ -403,7 +435,7 @@ sudo chmod +x /usr/local/bin/dddns
 curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --uninstall
 ```
 
-### Linux/macOS
+### Linux
 ```bash
 # Remove binary
 sudo rm /usr/local/bin/dddns
@@ -411,12 +443,25 @@ sudo rm /usr/local/bin/dddns
 # Remove configuration (optional)
 rm -rf ~/.dddns
 
-# Remove systemd service (Linux)
+# Remove systemd service
 sudo systemctl stop dddns.timer
 sudo systemctl disable dddns.timer
 sudo rm /etc/systemd/system/dddns.*
+sudo systemctl daemon-reload
+```
 
-# Remove LaunchAgent (macOS)
+### macOS
+```bash
+# Using Homebrew
+brew uninstall dddns
+
+# For binary installation
+sudo rm /usr/local/bin/dddns
+
+# Remove configuration (optional)
+rm -rf ~/.dddns
+
+# Remove LaunchAgent if configured
 launchctl unload ~/Library/LaunchAgents/com.dddns.updater.plist
 rm ~/Library/LaunchAgents/com.dddns.updater.plist
 ```

@@ -128,6 +128,42 @@ jobs:
           if [ "${{ matrix.goarm }}" != "" ]; then
             BUILD_NAME="${BUILD_NAME}v${{ matrix.goarm }}"
           fi
-          CGO_ENABLED=0 go build -o /tmp/dddns-${BUILD_NAME} .
+
+          # Build with version information
+          VERSION="test-build"
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          COMMIT=$(git rev-parse --short HEAD)
+
+          CGO_ENABLED=0 go build \
+            -ldflags="-X github.com/descoped/dddns/internal/version.Version=${VERSION} \
+                     -X github.com/descoped/dddns/internal/version.BuildDate=${BUILD_DATE} \
+                     -X github.com/descoped/dddns/internal/version.Commit=${COMMIT}" \
+            -o /tmp/dddns-${BUILD_NAME} .
+
+          # Verify binary was created and has expected size
+          if [ ! -f /tmp/dddns-${BUILD_NAME} ]; then
+            echo "✗ Build failed: binary not created"
+            exit 1
+          fi
+
+          # Check binary size (should be between 5MB and 15MB)
+          SIZE=$(stat -c%s /tmp/dddns-${BUILD_NAME} 2>/dev/null || stat -f%z /tmp/dddns-${BUILD_NAME} 2>/dev/null)
+          SIZE_MB=$((SIZE / 1048576))
+
+          if [ $SIZE -lt 5242880 ]; then  # 5MB
+            echo "✗ Binary suspiciously small: ${SIZE} bytes"
+            exit 1
+          elif [ $SIZE -gt 15728640 ]; then  # 15MB
+            echo "✗ Binary suspiciously large: ${SIZE} bytes"
+            exit 1
+          fi
+
           echo "✓ Build successful for ${BUILD_NAME}"
+          echo "  Binary size: ${SIZE_MB}MB (${SIZE} bytes)"
+
+          # If building for current platform, test execution
+          if [ "${{ matrix.os }}" = "linux" ] && [ "${{ matrix.arch }}" = "amd64" ] && [ "${{ runner.os }}" = "Linux" ]; then
+            echo "  Testing binary execution..."
+            /tmp/dddns-${BUILD_NAME} --version || true
+          fi
 

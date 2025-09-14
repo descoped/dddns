@@ -1,6 +1,7 @@
 # Descoped Dynamic DNS - dddns
 
 [![CI](https://github.com/descoped/dddns/actions/workflows/ci.yml/badge.svg)](https://github.com/descoped/dddns/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/descoped/dddns/branch/main/graph/badge.svg)](https://codecov.io/gh/descoped/dddns)
 [![Go Report Card](https://goreportcard.com/badge/github.com/descoped/dddns)](https://goreportcard.com/report/github.com/descoped/dddns)
 [![Release](https://img.shields.io/github/v/release/descoped/dddns)](https://github.com/descoped/dddns/releases)
 [![License](https://img.shields.io/github/license/descoped/dddns)](https://github.com/descoped/dddns/blob/main/LICENSE)

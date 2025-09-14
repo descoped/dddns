@@ -3,10 +3,10 @@
 # dddns Installation Script for Ubiquiti Dream Machines
 #
 # One-line installation:
-#   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+#   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 #
 # Or download and run:
-#   ./install.sh [--uninstall] [--force]
+#   ./install-on-unifi-os.sh [--uninstall] [--force]
 #
 
 set -e

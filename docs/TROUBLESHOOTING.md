@@ -81,10 +81,10 @@ sudo dddns update
 
 ```bash
 # Run with debug mode
-DEBUG=1 ./install.sh
+DEBUG=1 ./install-on-unifi-os.sh
 
 # Check environment first
-./install.sh --check-only
+./install-on-unifi-os.sh --check-only
 
 # Manual installation
 mkdir -p /data/dddns
@@ -325,7 +325,7 @@ curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/H
 curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash
 
 # Re-run dddns installer
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 
 # Verify files still exist
 ls -la /data/dddns/

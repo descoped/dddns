@@ -5,6 +5,16 @@ All notable changes to dddns will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### 🔧 Changed
+- Renamed `scripts/install.sh` to `scripts/install-on-unifi-os.sh` for clarity
+- Split Linux/macOS installation instructions in README (Homebrew for macOS, package managers for Linux)
+
+### ✨ Features
+- Added Homebrew formula support for macOS in `Formula/dddns.rb`
+- Added Makefile target `update-formula` for manual formula updates
+
 ## [v0.1.1] - 2025-09-14
 
 ### 🐛 Bug Fixes

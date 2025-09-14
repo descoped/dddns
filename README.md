@@ -56,7 +56,7 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 
 ```bash
 # One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 
 # Configure
 dddns config init
@@ -65,17 +65,42 @@ dddns config init
 dddns update --dry-run
 ```
 
-### Linux/macOS
+### macOS
 
 ```bash
-# Download latest release
-curl -L -o /usr/local/bin/dddns \
-  https://github.com/descoped/dddns/releases/latest/download/dddns_$(uname -s)_$(uname -m).tar.gz
-tar -xzf dddns_*.tar.gz
-chmod +x dddns
-sudo mv dddns /usr/local/bin/
+# Install via Homebrew
+brew tap descoped/dddns
+brew install dddns
 
 # Configure and run
+dddns config init
+dddns update
+```
+
+### Linux
+
+#### Debian/Ubuntu
+```bash
+# Download and install the .deb package
+curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.deb
+sudo dpkg -i dddns_Linux_x86_64.deb
+
+# For ARM64 systems:
+# curl -LO https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.deb
+# sudo dpkg -i dddns_Linux_arm64.deb
+```
+
+#### Red Hat/CentOS/Fedora
+```bash
+# Install the .rpm package
+sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_x86_64.rpm
+
+# For ARM64 systems:
+# sudo rpm -ivh https://github.com/descoped/dddns/releases/latest/download/dddns_Linux_arm64.rpm
+```
+
+#### Configure and run
+```bash
 dddns config init
 dddns update
 ```

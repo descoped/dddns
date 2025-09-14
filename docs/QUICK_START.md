@@ -17,7 +17,7 @@ Before you begin, you'll need:
 
 ```bash
 # One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 ```
 
 ### For Linux/macOS

@@ -50,7 +50,7 @@ Before installing dddns on your UDM:
 
 ```bash
 # One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 ```
 
 ### Step-by-Step Installation
@@ -75,14 +75,14 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.
 3. **Run installer**
    ```bash
    # Download installer
-   curl -O https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh
-   chmod +x install.sh
+   curl -O https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh
+   chmod +x install-on-unifi-os.sh
    
    # Check environment first
-   ./install.sh --check-only
-   
+   ./install-on-unifi-os.sh --check-only
+
    # Install
-   ./install.sh
+   ./install-on-unifi-os.sh
    ```
 
 4. **Configure AWS credentials**
@@ -429,8 +429,8 @@ cat /var/log/messages | grep dddns
 
 ```bash
 # Complete removal and reinstall
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s -- --uninstall
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --uninstall
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 ```
 
 ### Getting Help
@@ -442,7 +442,7 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.
 
 2. **Run environment check**
    ```bash
-   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash -s -- --check-only
+   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --check-only
    ```
 
 3. **Test components**

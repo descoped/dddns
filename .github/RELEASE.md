@@ -126,7 +126,7 @@ Use this template for release descriptions:
 
 ### Ubiquiti Dream Machine
 ```bash
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 ```
 
 ### Linux/macOS

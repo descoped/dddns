@@ -85,7 +85,7 @@ release:
 
     ### Ubiquiti Dream Machine (UDM/UDR)
     ```bash
-    curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install.sh | bash
+    curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s
     ```
 
     ### macOS/Linux

@@ -88,9 +88,9 @@ release:
     curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s
     ```
 
-    ### macOS/Linux
+    ### macOS
     ```bash
-    brew tap descoped/dddns
+    brew tap descoped/tap
     brew install dddns
     ```
 

@@ -71,7 +71,7 @@ dddns update --dry-run
 
 ```bash
 # Install via Homebrew
-brew tap descoped/dddns
+brew tap descoped/tap
 brew install dddns
 
 # Configure and run

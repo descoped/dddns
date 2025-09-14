@@ -207,8 +207,8 @@ sudo journalctl -u dddns -f
 ### Homebrew
 
 ```bash
-# Tap the repository and install
-brew tap descoped/dddns
+# Tap the repository
+brew tap descoped/tap
 brew install dddns
 
 # Update to latest version
@@ -218,7 +218,7 @@ brew upgrade dddns
 brew uninstall dddns
 ```
 
-> **Note**: The Homebrew formula needs manual updating after each release using `make update-formula VERSION=vX.Y.Z`.
+> **Note**: The Homebrew formula is maintained in the [homebrew-tap](https://github.com/descoped/homebrew-tap) repository.
 
 ### Binary Installation
 
@@ -317,19 +317,12 @@ services:
 
 ## Homebrew Formula Maintenance
 
-For maintainers: After creating a new release, update the Homebrew formula:
+For maintainers: Homebrew formulas are maintained in the separate [homebrew-tap](https://github.com/descoped/homebrew-tap) repository.
 
-```bash
-# Update formula with new version (after GitHub release is published)
-make update-formula VERSION=vX.Y.Z
-
-# Commit and push the updated formula
-git add Formula/dddns.rb
-git commit -m "chore: update Formula to vX.Y.Z"
-git push origin main
-```
-
-The formula is located at `Formula/dddns.rb` and contains checksums for macOS binaries only.
+After creating a new dddns release:
+1. Go to the homebrew-tap repository
+2. Run `make update-dddns VERSION=vX.Y.Z`
+3. Commit and push the updated formula
 
 ## Building from Source
 

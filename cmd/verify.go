@@ -148,11 +148,12 @@ func runVerify(_ *cobra.Command, _ []string) error {
 	// Summary
 	fmt.Println()
 	fmt.Println("=== Summary ===")
-	if route53IP == currentIP {
+	switch {
+	case route53IP == currentIP:
 		fmt.Println("✓ Route53 record is up to date")
-	} else if route53IP == "" {
+	case route53IP == "":
 		fmt.Println("⚠ No Route53 record found - run 'dddns update' to create it")
-	} else {
+	default:
 		fmt.Printf("✗ Route53 record (%s) doesn't match current IP (%s)\n", route53IP, currentIP)
 		fmt.Println("  Run 'dddns update' to fix this")
 	}

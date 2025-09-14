@@ -83,6 +83,7 @@ func (r *Route53Client) GetCurrentIP() (string, error) {
 		}
 	}
 
+	//nolint:ST1005 // "A record" is a DNS term, not an article
 	return "", fmt.Errorf("A record not found for %s", r.hostname)
 }
 

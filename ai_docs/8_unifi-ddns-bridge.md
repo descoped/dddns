@@ -429,10 +429,12 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (97 tests across 11 packages).
 **Findings:** The extraction was clean — one `DNSClient` interface in the updater package was enough to make the code testable without touching AWS. `cmd/verify.go` also called `GetCurrentIP()` and needed the same context plumbing; easy to miss without a grep. No behavior change observed in integration tests; cron path still logs the same messages in the same order.
 
-**A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.**
-- Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner wrapping `EncryptString(ak + ":" + sk)`.
-- Tests: new file `internal/crypto/device_crypto_test.go` with `TestEncryptDecryptString_RoundTrip`, `TestEncryptCredentials_RoundTrip`, `TestDecrypt_TamperedCiphertext_Fails`. Closes an existing coverage gap — the package has no direct unit tests today, only CLI-level coverage via `tests/integration_test.go:TestSecureCommand`.
-- **Accept:** no behavior change; secure config load/save bit-identical.
+**A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.** ✅ Completed
+- Extracted the AES-256-GCM + base64 machinery into `EncryptString(plaintext)` / `DecryptString(encoded)`. `EncryptCredentials` is now a one-liner wrapping `EncryptString(ak + ":" + sk)`; `DecryptCredentials` wraps `DecryptString` and splits on `:`.
+- `TestEncryptDecryptString_RoundTrip` and `TestDecrypt_TamperedCiphertext_Fails` appended to the existing `internal/crypto/device_crypto_test.go` (see finding).
+
+**Status:** ✅ Complete. Full suite green (99 tests across 11 packages).
+**Findings:** The plan claimed the crypto package had no direct unit tests — that was wrong. `internal/crypto/device_crypto_test.go` already existed with 7 tests (device-key consistency, credentials round-trip across input shapes, nonce freshness, invalid-data handling, secure-wipe, device-key fallback, plus a skipped different-keys scenario). Appending just the two genuinely new cases (direct round-trip of the new string primitives, and GCM auth-tag detection via a last-byte bit flip) instead of duplicating coverage. Existing tests pass unchanged — the refactor is behavior-preserving.
 
 ### Phase B — Config schema (no consumer yet)
 

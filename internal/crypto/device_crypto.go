@@ -147,86 +147,78 @@ func GetDeviceKey() ([]byte, error) {
 	return hash[:], nil
 }
 
-// EncryptCredentials encrypts AWS credentials using device-specific key
-func EncryptCredentials(accessKey, secretKey string) (string, error) {
+// EncryptString encrypts an arbitrary string using the device-specific key
+// (AES-256-GCM, random nonce, base64-encoded result). The output includes
+// the nonce as a prefix to the ciphertext.
+func EncryptString(plaintext string) (string, error) {
 	key, err := GetDeviceKey()
 	if err != nil {
 		return "", err
 	}
-
-	// Combine credentials
-	plaintext := fmt.Sprintf("%s:%s", accessKey, secretKey)
-
-	// Create AES cipher
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-
-	// GCM mode for authenticated encryption
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
-
-	// Create nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-
-	// Encrypt
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-
-	// Return base64 encoded
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// DecryptCredentials decrypts AWS credentials using device-specific key
-func DecryptCredentials(encrypted string) (accessKey, secretKey string, err error) {
+// DecryptString reverses EncryptString. It fails if the ciphertext is
+// corrupted, truncated, or was not produced on this device (the device
+// key differs).
+func DecryptString(encoded string) (string, error) {
 	key, err := GetDeviceKey()
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-
-	// Decode from base64
-	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
+	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-
-	// Create AES cipher
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-
-	// GCM mode
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-
-	// Extract nonce
 	nonceSize := gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
-		return "", "", fmt.Errorf("ciphertext too short")
+		return "", fmt.Errorf("ciphertext too short")
 	}
+	nonce, body := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, body, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
 
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+// EncryptCredentials encrypts AWS credentials using the device-specific key.
+// The access and secret keys are combined with a ":" separator.
+func EncryptCredentials(accessKey, secretKey string) (string, error) {
+	return EncryptString(accessKey + ":" + secretKey)
+}
 
-	// Decrypt
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+// DecryptCredentials reverses EncryptCredentials.
+func DecryptCredentials(encrypted string) (accessKey, secretKey string, err error) {
+	plaintext, err := DecryptString(encrypted)
 	if err != nil {
 		return "", "", err
 	}
-
-	// Split credentials
-	parts := strings.SplitN(string(plaintext), ":", 2)
+	parts := strings.SplitN(plaintext, ":", 2)
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("invalid credential format")
 	}
-
 	return parts[0], parts[1], nil
 }
 

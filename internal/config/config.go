@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,51 +10,47 @@ import (
 
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/profile"
-	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
 
 // Config holds all configuration for dddns.
 type Config struct {
 	// AWS settings
-	AWSRegion    string `mapstructure:"aws_region"    yaml:"aws_region"`
-	AWSAccessKey string `mapstructure:"aws_access_key" yaml:"aws_access_key"`
-	AWSSecretKey string `mapstructure:"aws_secret_key" yaml:"aws_secret_key"`
+	AWSRegion    string `yaml:"aws_region"`
+	AWSAccessKey string `yaml:"aws_access_key"`
+	AWSSecretKey string `yaml:"aws_secret_key"`
 
 	// DNS settings (required)
-	HostedZoneID string `mapstructure:"hosted_zone_id" yaml:"hosted_zone_id"`
-	Hostname     string `mapstructure:"hostname"       yaml:"hostname"`
-	TTL          int64  `mapstructure:"ttl"            yaml:"ttl"`
+	HostedZoneID string `yaml:"hosted_zone_id"`
+	Hostname     string `yaml:"hostname"`
+	TTL          int64  `yaml:"ttl"`
 
 	// Operational settings
-	IPCacheFile string `mapstructure:"ip_cache_file" yaml:"ip_cache_file"`
-	ForceUpdate bool   `mapstructure:"force_update"  yaml:"-"`
-	DryRun      bool   `mapstructure:"dry_run"       yaml:"-"`
+	IPCacheFile string `yaml:"ip_cache_file"`
 
 	// IPSource overrides where dddns obtains the current public IP.
 	// Values: "" or "auto" (mode-driven default), "local" (read the WAN
 	// interface), "remote" (call checkip.amazonaws.com). Serve mode always
 	// reads the local interface regardless of this setting.
-	IPSource string `mapstructure:"ip_source" yaml:"ip_source,omitempty"`
+	IPSource string `yaml:"ip_source,omitempty"`
 
 	// Server holds parameters for serve mode (dddns serve). nil when the
 	// `server:` block is absent from the config file, which disables serve
 	// mode. See ServerConfig for fields.
-	Server *ServerConfig `mapstructure:"server" yaml:"server,omitempty"`
+	Server *ServerConfig `yaml:"server,omitempty"`
 }
 
 // ServerConfig holds parameters for serve mode (dddns serve).
 //
-// The same struct is used by the plaintext Config (via mapstructure/viper)
-// and will be used by SecureConfig (via yaml.v3) — hence both tag sets.
 // The encrypted equivalent of SharedSecret lives in a sibling struct in
-// secure_config.go so the two wire formats stay explicit.
+// secure_config.go (SecureServerConfig) so the two wire formats stay
+// explicit.
 type ServerConfig struct {
-	Bind         string   `mapstructure:"bind"           yaml:"bind"`
-	SharedSecret string   `mapstructure:"shared_secret"  yaml:"shared_secret,omitempty"`
-	AllowedCIDRs []string `mapstructure:"allowed_cidrs"  yaml:"allowed_cidrs"`
-	AuditLog     string   `mapstructure:"audit_log"      yaml:"audit_log,omitempty"`
-	WANInterface string   `mapstructure:"wan_interface"  yaml:"wan_interface,omitempty"`
+	Bind         string   `yaml:"bind"`
+	SharedSecret string   `yaml:"shared_secret,omitempty"`
+	AllowedCIDRs []string `yaml:"allowed_cidrs"`
+	AuditLog     string   `yaml:"audit_log,omitempty"`
+	WANInterface string   `yaml:"wan_interface,omitempty"`
 }
 
 // Validate reports whether the server block is well-formed. It is called
@@ -82,15 +79,13 @@ func (s *ServerConfig) Validate() error {
 	return nil
 }
 
-// Load reads configuration from file and environment
+// Load reads configuration from the file recorded by SetActivePath.
+// Encrypted .secure paths are delegated to LoadSecure. Defaults are
+// applied before YAML is parsed so any fields set in the file override
+// them.
 func Load() (*Config, error) {
-	// Check if using secure config (from either viper or flag)
-	configFile := viper.ConfigFileUsed()
-	if configFile == "" && viper.IsSet("config") {
-		configFile = viper.GetString("config")
-	}
+	configFile := activeConfigPath
 	if configFile != "" && strings.HasSuffix(configFile, ".secure") {
-		// Load encrypted config
 		return LoadSecure(configFile)
 	}
 
@@ -102,27 +97,29 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		// Default values
+		// Default values — overridden by YAML below if present.
 		AWSRegion:   "us-east-1",
 		TTL:         300,
 		IPCacheFile: cachePath,
-		ForceUpdate: false,
-		DryRun:      false,
 	}
 
-	// Load from viper (already initialized in cmd/root.go)
-	if err := viper.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	// If no config file is active, return just defaults — the caller
+	// will typically run Validate() which will report the missing
+	// required fields.
+	if configFile == "" {
+		return cfg, nil
 	}
 
-	// Override with command-line flags if set
-	if viper.IsSet("force") {
-		cfg.ForceUpdate = viper.GetBool("force")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("read config: %w", err)
 	}
-	if viper.IsSet("dry-run") {
-		cfg.DryRun = viper.GetBool("dry-run")
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
-
 	return cfg, nil
 }
 

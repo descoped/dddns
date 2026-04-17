@@ -4,13 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/descoped/dddns/internal/config"
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/profile"
 	"github.com/descoped/dddns/internal/version"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -35,7 +37,6 @@ func init() {
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.dddns/config.yaml)")
-	_ = viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
 }
 
 // checkConfigPermissions ensures config file has secure permissions (600 or 400)
@@ -54,77 +55,84 @@ func checkConfigPermissions(path string) error {
 	return nil
 }
 
-// initConfig reads in config file and ENV variables if set.
-// It handles both regular YAML configs and encrypted .secure configs.
-// Priority: command-line flag > secure config > regular config.
+// initConfig resolves the config file path and records it with
+// config.SetActivePath so config.Load can pick it up later.
+//
+// Resolution priority:
+//  1. --config flag (any extension, used verbatim).
+//  2. <profile data dir>/config.secure (preferred when present).
+//  3. <profile data dir>/config.yaml.
+//
+// A missing file is not fatal here: the user may be about to run
+// `dddns config init`. Any other stat error (permissions, I/O) IS
+// fatal — silently continuing would surface downstream as a confusing
+// "aws_access_key is required" error that hides the real cause.
 func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag
-		viper.SetConfigFile(cfgFile)
-
-		// Handle .secure files specially
-		if strings.HasSuffix(cfgFile, ".secure") {
-			// For secure files, we just need to track the path
-			// The actual loading will be handled by LoadSecure in config package
-			viper.SetConfigType("yaml") // Set type to avoid "unsupported" error
-		}
-	} else {
-		// Detect active deployment profile.
+	resolved := cfgFile
+	if resolved == "" {
 		p := profile.Detect()
 
-		// Check for secure config first (prefer encrypted over plaintext)
 		securePath, err := p.GetSecurePath()
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Error resolving secure config path: %v\n", err)
 			os.Exit(1)
 		}
 		if _, err := os.Stat(securePath); err == nil {
-			// Found secure config, use it
-			cfgFile = securePath
-			viper.SetConfigFile(securePath)
-			viper.SetConfigType("yaml")
+			resolved = securePath
+		} else if !errors.Is(err, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+			os.Exit(1)
 		} else {
-			// Fall back to regular config search
 			dataDir, err := p.GetDataDir()
 			if err != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "Error resolving data directory: %v\n", err)
 				os.Exit(1)
 			}
-			viper.AddConfigPath(dataDir)
-			viper.SetConfigName("config")
-			viper.SetConfigType("yaml")
+			yamlPath := filepath.Join(dataDir, "config.yaml")
+			if _, err := os.Stat(yamlPath); err == nil {
+				resolved = yamlPath
+			} else if !errors.Is(err, os.ErrNotExist) {
+				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+				os.Exit(1)
+			}
+			// If yamlPath also missing, resolved stays "" — Load()
+			// will return defaults and Validate() will surface the
+			// real problem when a command actually needs config.
 		}
 	}
 
-	// Read config file if it exists (skip for .secure files)
-	if cfgFile != "" && strings.HasSuffix(cfgFile, ".secure") {
-		// Don't try to read .secure files with viper
-		// Just verify the file exists
+	// Flag-supplied path must exist (stat fatal on any error).
+	if cfgFile != "" {
 		if _, err := os.Stat(cfgFile); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Error: config file not found: %v\n", err)
 			os.Exit(1)
 		}
-	} else if err := viper.ReadInConfig(); err != nil {
-		// Config file not found is okay — the user may be about to create one via
-		// `dddns config init`. Any other error (YAML syntax, permissions, I/O) is
-		// fatal: silently continuing would cause a downstream "aws_access_key is
-		// required" error that hides the real cause.
-		var configNotFoundErr viper.ConfigFileNotFoundError
-		if !errors.As(err, &configNotFoundErr) {
-			_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-			os.Exit(1)
-		}
 	}
 
-	// Check config file permissions for security
-	configFile := viper.ConfigFileUsed()
-	if configFile == "" && cfgFile != "" {
-		configFile = cfgFile // Use the flag value for .secure files
-	}
-	if configFile != "" {
-		if err := checkConfigPermissions(configFile); err != nil {
+	cfgFile = resolved
+	config.SetActivePath(resolved)
+
+	if resolved != "" {
+		if err := checkConfigPermissions(resolved); err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "Security warning: %v\n", err)
 			os.Exit(1)
+		}
+		// Eagerly parse plaintext YAML so a malformed file fails
+		// fast with a clear "Error reading config file" message
+		// instead of surfacing later as a validation error.
+		// .secure files are binary-ish and get parsed by LoadSecure
+		// during config.Load.
+		if !strings.HasSuffix(resolved, ".secure") {
+			data, err := os.ReadFile(resolved)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+				os.Exit(1)
+			}
+			var probe map[string]interface{}
+			if err := yaml.Unmarshal(data, &probe); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 }

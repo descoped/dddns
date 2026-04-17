@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/descoped/dddns/internal/config"
-	"github.com/spf13/viper"
 )
 
 func TestLoadConfig(t *testing.T) {
@@ -28,13 +27,7 @@ ip_cache_file: "/tmp/test-dddns-cache.txt"`
 		t.Fatalf("Failed to create test config file: %v", err)
 	}
 
-	// Reset viper for clean test
-	viper.Reset()
-	viper.SetConfigFile(configFile)
-
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatalf("Failed to read config: %v", err)
-	}
+	config.SetActivePath(configFile)
 
 	// Load config
 	cfg, err := config.Load()
@@ -58,29 +51,6 @@ ip_cache_file: "/tmp/test-dddns-cache.txt"`
 	}
 	if cfg.IPCacheFile != "/tmp/test-dddns-cache.txt" {
 		t.Errorf("Expected IPCacheFile '/tmp/test-dddns-cache.txt', got %q", cfg.IPCacheFile)
-	}
-}
-
-func TestLoadConfigWithFlags(t *testing.T) {
-	// Reset viper
-	viper.Reset()
-
-	// Set flags
-	viper.Set("force", true)
-	viper.Set("dry-run", true)
-
-	// Load config
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	// Verify flags override
-	if !cfg.ForceUpdate {
-		t.Error("Expected ForceUpdate to be true")
-	}
-	if !cfg.DryRun {
-		t.Error("Expected DryRun to be true")
 	}
 }
 
@@ -192,7 +162,7 @@ func TestCreateDefaultConfig_InvalidPath(t *testing.T) {
 }
 
 // TestLoadConfig_WithServerBlock verifies the new `server:` block parses
-// correctly and round-trips through viper into a *ServerConfig on Config.
+// correctly and round-trips into a *ServerConfig on Config.
 func TestLoadConfig_WithServerBlock(t *testing.T) {
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
@@ -217,11 +187,7 @@ server:
 		t.Fatal(err)
 	}
 
-	viper.Reset()
-	viper.SetConfigFile(configFile)
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatal(err)
-	}
+	config.SetActivePath(configFile)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -263,11 +229,7 @@ ttl: 300`
 		t.Fatal(err)
 	}
 
-	viper.Reset()
-	viper.SetConfigFile(configFile)
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatal(err)
-	}
+	config.SetActivePath(configFile)
 
 	cfg, err := config.Load()
 	if err != nil {

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/descoped/dddns/internal/config"
-	"github.com/spf13/viper"
 )
 
 const rotateTestSecret = "initial-secret-value"
@@ -31,8 +30,8 @@ func baseRotateConfig(cacheFile string) *config.Config {
 }
 
 // writeInitialConfig writes the passed cfg as plaintext YAML to
-// tmpDir/config.yaml, mirrors cfgFile and viper to point at it, and
-// returns the path. Cleanup restores global state.
+// tmpDir/config.yaml, mirrors cfgFile and the active config path to
+// point at it, and returns the path. Cleanup restores global state.
 func writeInitialConfig(t *testing.T, cfg *config.Config) string {
 	t.Helper()
 	tmp := t.TempDir()
@@ -42,13 +41,13 @@ func writeInitialConfig(t *testing.T, cfg *config.Config) string {
 	}
 
 	origCfgFile := cfgFile
-	t.Cleanup(func() { cfgFile = origCfgFile; viper.Reset() })
+	origActive := config.ActivePath()
+	t.Cleanup(func() {
+		cfgFile = origCfgFile
+		config.SetActivePath(origActive)
+	})
 	cfgFile = path
-	viper.Reset()
-	viper.SetConfigFile(path)
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatal(err)
-	}
+	config.SetActivePath(path)
 	return path
 }
 
@@ -68,11 +67,7 @@ func TestRotateSecret_PlaintextRoundTrip(t *testing.T) {
 	}
 
 	// Reload and verify the secret changed to the one in the output.
-	viper.Reset()
-	viper.SetConfigFile(path)
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatal(err)
-	}
+	config.SetActivePath(path)
 	cfgAfter, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -102,11 +97,7 @@ func TestRotateSecret_TwoCallsProduceDifferentSecrets(t *testing.T) {
 		if err := runRotateSecret(rotateSecretCmd, nil); err != nil {
 			t.Fatalf("runRotateSecret failed: %v", err)
 		}
-		viper.Reset()
-		viper.SetConfigFile(path)
-		if err := viper.ReadInConfig(); err != nil {
-			t.Fatal(err)
-		}
+		config.SetActivePath(path)
 		c, err := config.Load()
 		if err != nil {
 			t.Fatal(err)
@@ -144,11 +135,7 @@ func TestRotateSecret_RequiresServerBlockOrInit(t *testing.T) {
 	}
 	// Reload and verify the server block was created with the loopback
 	// default bind and CIDR.
-	viper.Reset()
-	viper.SetConfigFile(path)
-	if err := viper.ReadInConfig(); err != nil {
-		t.Fatal(err)
-	}
+	config.SetActivePath(path)
 	c, err := config.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -177,15 +164,17 @@ func TestRotateSecret_SecureConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Point both cfgFile and viper's "config" key at the secure path.
-	// config.Load checks viper.IsSet("config") to resolve .secure files
-	// without a concrete viper.SetConfigFile + ReadInConfig (.secure is
-	// not YAML).
+	// Point both cfgFile and the active config path at the secure
+	// path. config.Load dispatches .secure paths to LoadSecure based
+	// on the extension recorded via SetActivePath.
 	origCfgFile := cfgFile
-	t.Cleanup(func() { cfgFile = origCfgFile; viper.Reset() })
+	origActive := config.ActivePath()
+	t.Cleanup(func() {
+		cfgFile = origCfgFile
+		config.SetActivePath(origActive)
+	})
 	cfgFile = securePath
-	viper.Reset()
-	viper.Set("config", securePath)
+	config.SetActivePath(securePath)
 
 	var buf bytes.Buffer
 	rotateSecretCmd.SetOut(&buf)

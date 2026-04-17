@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
+	"github.com/descoped/dddns/internal/config"
 )
 
 func TestSetMode_InvalidMode(t *testing.T) {
@@ -141,18 +141,12 @@ func TestSetMode_SwitchMode(t *testing.T) {
 	t.Cleanup(func() { setModeBootPath = origPath })
 	setModeBootPath = tmpBoot
 
-	// Reset viper between runSetMode calls so each Load re-reads the file.
+	// Refresh the active config path between runSetMode calls so each
+	// Load re-reads the file.
 	run := func(mode string) string {
 		var buf bytes.Buffer
 		setModeCmd.SetOut(&buf)
-		// writeInitialConfig resets viper but runSetMode reuses the same
-		// already-loaded state, so force a reload to ensure mode toggles
-		// don't rely on stale config.
-		viper.Reset()
-		viper.SetConfigFile(cfgFile)
-		if err := viper.ReadInConfig(); err != nil {
-			t.Fatal(err)
-		}
+		config.SetActivePath(cfgFile)
 		if err := runSetMode(setModeCmd, []string{mode}); err != nil {
 			t.Fatalf("set-mode %s: %v", mode, err)
 		}

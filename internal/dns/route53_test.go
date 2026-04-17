@@ -2,205 +2,229 @@ package dns
 
 import (
 	"context"
-	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
-
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/route53"
-	"github.com/aws/aws-sdk-go-v2/service/route53/types"
+	"time"
 )
 
-// Mock Route53 client for testing
-type mockRoute53Client struct {
-	listResourceRecordSetsFunc   func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error)
-	changeResourceRecordSetsFunc func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error)
-}
+// fixedNow returns a deterministic time so SigV4 signatures are stable under test.
+func fixedNow() time.Time { return time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC) }
 
-func (m *mockRoute53Client) ListResourceRecordSets(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
-	if m.listResourceRecordSetsFunc != nil {
-		return m.listResourceRecordSetsFunc(ctx, params, optFns...)
-	}
-	return &route53.ListResourceRecordSetsOutput{
-		ResourceRecordSets: []types.ResourceRecordSet{
-			{
-				Name: aws.String("test.example.com."),
-				Type: types.RRTypeA,
-				ResourceRecords: []types.ResourceRecord{
-					{Value: aws.String("1.2.3.4")},
-				},
-			},
-		},
-	}, nil
-}
-
-func (m *mockRoute53Client) ChangeResourceRecordSets(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
-	if m.changeResourceRecordSetsFunc != nil {
-		return m.changeResourceRecordSetsFunc(ctx, params, optFns...)
-	}
-	return &route53.ChangeResourceRecordSetsOutput{
-		ChangeInfo: &types.ChangeInfo{
-			Id:     aws.String("test-change-id"),
-			Status: types.ChangeStatusPending,
-		},
-	}, nil
-}
-
-func TestRoute53Client_GetCurrentIP(t *testing.T) {
-	client := &Route53Client{
-		client:       &mockRoute53Client{},
+func newTestClient(t *testing.T, handler http.HandlerFunc) *Route53Client {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return &Route53Client{
+		accessKey:    "AKIDEXAMPLE",
+		secretKey:    "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
 		hostedZoneID: "Z123456",
 		hostname:     "test.example.com",
 		ttl:          300,
+		httpClient:   srv.Client(),
+		baseURL:      srv.URL,
+		now:          fixedNow,
 	}
+}
+
+const sampleListResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<ListResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <ResourceRecordSets>
+    <ResourceRecordSet>
+      <Name>test.example.com.</Name>
+      <Type>A</Type>
+      <TTL>300</TTL>
+      <ResourceRecords>
+        <ResourceRecord><Value>1.2.3.4</Value></ResourceRecord>
+      </ResourceRecords>
+    </ResourceRecordSet>
+  </ResourceRecordSets>
+  <IsTruncated>false</IsTruncated>
+  <MaxItems>1</MaxItems>
+</ListResourceRecordSetsResponse>`
+
+const sampleEmptyListResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<ListResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <ResourceRecordSets></ResourceRecordSets>
+  <IsTruncated>false</IsTruncated>
+  <MaxItems>1</MaxItems>
+</ListResourceRecordSetsResponse>`
+
+const sampleChangeResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<ChangeResourceRecordSetsResponse xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
+  <ChangeInfo>
+    <Id>/change/C2682N5HXP0BZ4</Id>
+    <Status>PENDING</Status>
+    <SubmittedAt>2026-04-17T12:00:00Z</SubmittedAt>
+  </ChangeInfo>
+</ChangeResourceRecordSetsResponse>`
+
+const sampleErrorResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<ErrorResponse>
+  <Error>
+    <Type>Sender</Type>
+    <Code>InvalidChangeBatch</Code>
+    <Message>The request contained an invalid value.</Message>
+  </Error>
+  <RequestId>abc-123</RequestId>
+</ErrorResponse>`
+
+func TestRoute53Client_GetCurrentIP(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if !strings.Contains(r.URL.Path, "/hostedzone/Z123456/rrset") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("type") != "A" {
+			t.Errorf("expected type=A, got %q", r.URL.Query().Get("type"))
+		}
+		if r.Header.Get("Authorization") == "" {
+			t.Error("Authorization header missing (SigV4 signing failed)")
+		}
+		if r.Header.Get("X-Amz-Date") == "" {
+			t.Error("X-Amz-Date header missing")
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = io.WriteString(w, sampleListResponse)
+	})
 
 	ip, err := client.GetCurrentIP(context.Background())
 	if err != nil {
 		t.Fatalf("GetCurrentIP failed: %v", err)
 	}
-
 	if ip != "1.2.3.4" {
-		t.Errorf("Expected IP 1.2.3.4, got %s", ip)
+		t.Errorf("expected 1.2.3.4, got %s", ip)
 	}
 }
 
 func TestRoute53Client_GetCurrentIP_NotFound(t *testing.T) {
-	mockClient := &mockRoute53Client{
-		listResourceRecordSetsFunc: func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
-			return &route53.ListResourceRecordSetsOutput{
-				ResourceRecordSets: []types.ResourceRecordSet{},
-			}, nil
-		},
-	}
-
-	client := &Route53Client{
-		client:       mockClient,
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com",
-		ttl:          300,
-	}
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, sampleEmptyListResponse)
+	})
 
 	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
-		t.Error("Expected error for not found record, got nil")
+		t.Error("expected error for not-found record, got nil")
 	}
 }
 
 func TestRoute53Client_GetCurrentIP_Error(t *testing.T) {
-	mockClient := &mockRoute53Client{
-		listResourceRecordSetsFunc: func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
-			return nil, fmt.Errorf("AWS error")
-		},
-	}
-
-	client := &Route53Client{
-		client:       mockClient,
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com",
-		ttl:          300,
-	}
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, sampleErrorResponse)
+	})
 
 	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
-		t.Error("Expected error from AWS, got nil")
+		t.Fatal("expected error from HTTP 500, got nil")
+	}
+	if !strings.Contains(err.Error(), "InvalidChangeBatch") {
+		t.Errorf("expected parsed AWS error code in message, got: %v", err)
 	}
 }
 
 func TestRoute53Client_UpdateIP(t *testing.T) {
-	client := &Route53Client{
-		client:       &mockRoute53Client{},
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com",
-		ttl:          300,
-	}
+	var bodyBytes []byte
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/rrset/") {
+			t.Errorf("expected path ending in /rrset/, got %s", r.URL.Path)
+		}
+		bodyBytes, _ = io.ReadAll(r.Body)
+		if !strings.Contains(string(bodyBytes), "<Action>UPSERT</Action>") {
+			t.Errorf("expected UPSERT action in body, got %s", string(bodyBytes))
+		}
+		if !strings.Contains(string(bodyBytes), "<Value>5.6.7.8</Value>") {
+			t.Errorf("expected new IP in body, got %s", string(bodyBytes))
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = io.WriteString(w, sampleChangeResponse)
+	})
 
-	err := client.UpdateIP(context.Background(), "5.6.7.8")
-	if err != nil {
+	if err := client.UpdateIP(context.Background(), "5.6.7.8"); err != nil {
 		t.Fatalf("UpdateIP failed: %v", err)
 	}
+	if !strings.Contains(string(bodyBytes), `xmlns="https://route53.amazonaws.com/doc/2013-04-01/"`) {
+		t.Error("request body missing Route53 XML namespace")
+	}
 }
 
-// TestRoute53Client_GetCurrentIP_EmptyHostname verifies that an empty
-// hostname does not panic. Config.Validate() should catch this earlier,
-// but the Route53 client must not assume — the prior `fqdn[len(fqdn)-1]`
-// indexing crashed at runtime on empty strings.
+// TestRoute53Client_GetCurrentIP_EmptyHostname verifies that an empty hostname
+// does not panic. Config.Validate() catches this earlier, but the client must
+// stay safe.
 func TestRoute53Client_GetCurrentIP_EmptyHostname(t *testing.T) {
-	client := &Route53Client{
-		client:       &mockRoute53Client{},
-		hostedZoneID: "Z123456",
-		hostname:     "",
-		ttl:          300,
-	}
-	// Must not panic. Empty is still not a valid lookup key so we expect
-	// an error (from the "A record not found" path), but not a crash.
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, sampleEmptyListResponse)
+	})
+	client.hostname = ""
+
 	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
-		t.Error("Expected error for empty hostname, got nil")
+		t.Error("expected error for empty hostname, got nil")
 	}
 }
 
-// TestRoute53Client_UpdateIP_EmptyHostname verifies that UpdateIP also
-// handles an empty hostname without panicking.
 func TestRoute53Client_UpdateIP_EmptyHostname(t *testing.T) {
-	client := &Route53Client{
-		client:       &mockRoute53Client{},
-		hostedZoneID: "Z123456",
-		hostname:     "",
-		ttl:          300,
-	}
-	// Must not panic.
-	_ = client.UpdateIP(context.Background(), "1.2.3.4")
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, sampleChangeResponse)
+	})
+	client.hostname = ""
+	_ = client.UpdateIP(context.Background(), "1.2.3.4") // must not panic
 }
 
-// TestRoute53Client_AlreadyDottedHostname verifies that a hostname that
-// already ends with "." is passed through unchanged (no double-dot).
 func TestRoute53Client_AlreadyDottedHostname(t *testing.T) {
-	var captured string
-	mockClient := &mockRoute53Client{
-		listResourceRecordSetsFunc: func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
-			captured = *params.StartRecordName
-			return &route53.ListResourceRecordSetsOutput{
-				ResourceRecordSets: []types.ResourceRecordSet{
-					{
-						Name: aws.String("test.example.com."),
-						Type: types.RRTypeA,
-						ResourceRecords: []types.ResourceRecord{
-							{Value: aws.String("1.2.3.4")},
-						},
-					},
-				},
-			}, nil
-		},
-	}
-	client := &Route53Client{
-		client:       mockClient,
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com.", // already dotted
-		ttl:          300,
-	}
+	var capturedName string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		capturedName = r.URL.Query().Get("name")
+		_, _ = io.WriteString(w, sampleListResponse)
+	})
+	client.hostname = "test.example.com." // already dotted
+
 	if _, err := client.GetCurrentIP(context.Background()); err != nil {
 		t.Fatalf("GetCurrentIP failed: %v", err)
 	}
-	if captured != "test.example.com." {
-		t.Errorf("expected StartRecordName=%q (no double-dot), got %q", "test.example.com.", captured)
+	if capturedName != "test.example.com." {
+		t.Errorf("expected name=%q (no double-dot), got %q", "test.example.com.", capturedName)
 	}
 }
 
 func TestRoute53Client_UpdateIP_Error(t *testing.T) {
-	mockClient := &mockRoute53Client{
-		changeResourceRecordSetsFunc: func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
-			return nil, fmt.Errorf("AWS update error")
-		},
-	}
-
-	client := &Route53Client{
-		client:       mockClient,
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com",
-		ttl:          300,
-	}
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, sampleErrorResponse)
+	})
 
 	err := client.UpdateIP(context.Background(), "5.6.7.8")
 	if err == nil {
-		t.Error("Expected error from AWS update, got nil")
+		t.Fatal("expected error from HTTP 400, got nil")
+	}
+	if !strings.Contains(err.Error(), "InvalidChangeBatch") {
+		t.Errorf("expected parsed AWS error code, got: %v", err)
+	}
+}
+
+// TestRoute53Client_Auth_RejectsMissingCredentials guards the constructor's
+// fail-closed behaviour.
+func TestRoute53Client_Auth_RejectsMissingCredentials(t *testing.T) {
+	cases := []struct {
+		name, ak, sk string
+	}{
+		{"empty access", "", "secret"},
+		{"empty secret", "access", ""},
+		{"both empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewRoute53Client(context.Background(), "us-east-1", tc.ak, tc.sk, "Z1", "h.example.com", 300)
+			if err == nil {
+				t.Error("expected error for missing credentials, got nil")
+			}
+		})
 	}
 }

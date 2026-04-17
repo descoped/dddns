@@ -12,7 +12,6 @@ import (
 	"github.com/descoped/dddns/internal/config"
 	"github.com/descoped/dddns/internal/updater"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -42,10 +41,6 @@ func init() {
 	updateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without making changes")
 	updateCmd.Flags().StringVar(&customIP, "ip", "", "Use specific IP address instead of auto-detecting")
 	updateCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output (for cron)")
-
-	_ = viper.BindPFlag("force", updateCmd.Flags().Lookup("force"))
-	_ = viper.BindPFlag("dry-run", updateCmd.Flags().Lookup("dry-run"))
-	_ = viper.BindPFlag("quiet", updateCmd.Flags().Lookup("quiet"))
 }
 
 // runUpdate wires the cobra command to the updater package. It builds a
@@ -71,8 +66,8 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	}
 
 	opts := updater.Options{
-		Force:  cfg.ForceUpdate,
-		DryRun: cfg.DryRun,
+		Force:  forceUpdate,
+		DryRun: dryRun,
 		Quiet:  quiet,
 	}
 	if customIP != "" {

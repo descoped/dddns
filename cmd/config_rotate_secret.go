@@ -11,7 +11,6 @@ import (
 	"github.com/descoped/dddns/internal/config"
 	"github.com/descoped/dddns/internal/server"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var (
@@ -112,12 +111,12 @@ func generateSecret() (string, error) {
 }
 
 // configPath returns the config file that was actually loaded — either
-// the --config flag value or the path viper auto-discovered.
+// the --config flag value or the path initConfig auto-discovered.
 func configPath() string {
 	if cfgFile != "" {
 		return cfgFile
 	}
-	return viper.ConfigFileUsed()
+	return config.ActivePath()
 }
 
 // printNewSecret writes the freshly-rotated secret in a clearly-framed

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/spf13/viper"
+	"github.com/descoped/dddns/internal/config"
 )
 
 func TestUpdateCommandDryRun(t *testing.T) {
@@ -26,8 +26,7 @@ ip_cache_file: "` + cacheFile + `"`
 		t.Fatalf("Failed to create test config: %v", err)
 	}
 
-	// Reset viper
-	viper.Reset()
+	config.SetActivePath(configPath)
 
 	// Set args for update with dry-run
 	rootCmd.SetArgs([]string{"update", "--config", configPath, "--dry-run"})

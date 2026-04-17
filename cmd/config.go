@@ -15,7 +15,7 @@ import (
 	"github.com/descoped/dddns/internal/dns"
 	"github.com/descoped/dddns/internal/profile"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Configuration command flags.
@@ -247,10 +247,9 @@ func runInteractiveConfig(configPath string, exists bool) error {
 		fmt.Println()
 
 		// Try to load existing config.
-		viper.SetConfigFile(configPath)
-		if err := viper.ReadInConfig(); err == nil {
+		if data, err := os.ReadFile(configPath); err == nil {
 			var loaded config.Config
-			if err := viper.Unmarshal(&loaded); err == nil {
+			if err := yaml.Unmarshal(data, &loaded); err == nil {
 				existing = &loaded
 			}
 		}

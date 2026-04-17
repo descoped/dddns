@@ -370,14 +370,47 @@ UniFi Network Controller → Settings → Internet → Dynamic DNS → Create:
 
 Ordered, each step an independent commit with passing tests.
 
+### Phase 0 — Pre-existing bug fixes (orthogonal to UniFi feature)
+
+These are bugs discovered during design analysis. They pre-date this work, are independent of the feature, and belong in their own commits so they can be reviewed on their own merits. Landing them before Phase A means the refactors operate on clean code rather than propagating known defects.
+
+**0.1. Fix path manipulation bugs.**
+- `cmd/update.go:writeCachedIP` — replace `path[:strings.LastIndex(path, "/")]` with `filepath.Dir(path)`. Current code panics on paths without `/` (returns `-1`) and breaks on Windows.
+- `internal/config/config.go:CreateDefault` — replace `path[:len(path)-len("/config.yaml")]` with `filepath.Dir(path)`. Current code assumes the exact filename `config.yaml`; breaks with `--config foo.yaml` or on Windows.
+- Tests: table-driven cases — no separator, trailing slash, Windows backslash.
+- **Accept:** unchanged on current Unix paths; no panic on edge cases.
+
+**0.2. Fix `IsProxyIP` silent API-failure bug.**
+- `internal/commands/myip/myip.go` — add `Status string` to `geoLocation`; return an error when `status != "success"` rather than unmarshalling into `Proxy: false` and silently reporting "not a proxy". Today, an ip-api.com outage or throttle masquerades as a clean "direct connection".
+- Tests: mock responses for `success+proxy=true`, `success+proxy=false`, `status=fail` (must error), malformed JSON.
+- **Accept:** API failures surface as errors.
+
+**0.3. Fail-fast on malformed config.**
+- `cmd/root.go:initConfig` — on `ReadInConfig` errors other than `ConfigFileNotFoundError`, print the error and `os.Exit(1)`. Today it prints to stderr and silently continues, producing a confusing downstream `aws_access_key is required` error for what is actually a YAML syntax problem.
+- Tests: pass malformed YAML; assert non-zero exit and a parse-error message.
+- **Accept:** users see the real root cause of config problems.
+
+**0.4. Guard empty hostname in Route53 client.**
+- `internal/dns/route53.go` — replace `fqdn[len(fqdn)-1] != '.'` with `strings.HasSuffix(fqdn, ".")`. Panics-on-empty becomes graceful handling, defense in depth behind `Validate()`.
+- Tests: empty, dotted, undotted hostnames.
+- **Accept:** no panic; behavior identical for non-empty input.
+
+**0.5. Soft-fail proxy check.**
+- `cmd/update.go` — on `IsProxyIP` error, log a warning and proceed rather than aborting the update. Today an ip-api.com outage (free tier: 45 req/min) halts every cron tick.
+- Add optional `proxy_check_strict: bool` config field (default `false` = soft). Strict mode preserves the current hard-fail semantics for users who want it.
+- Tests: mock `IsProxyIP` returning an error → strict=false proceeds, strict=true aborts.
+- **Accept:** third-party outages no longer block DNS updates by default.
+
 ### Phase A — Prep refactors (no behavior change)
 
-**A1. Extract `internal/updater`.**
+**A1. Extract `internal/updater`; add context and signals.**
 - Move update core out of `cmd/update.go`; new package `internal/updater`.
 - `Update(ctx, cfg, Options) (*Result, error)` with `OverrideIP` option.
 - `cmd/update.go` shrinks to: IP detect (if no override) → proxy check → `updater.Update` → print.
-- Tests: move existing `cmd/update_test.go` coverage into `internal/updater/updater_test.go`; add `OverrideIP` test.
-- **Accept:** `dddns update` behavior identical; all existing tests pass.
+- **Plumb `context.Context` with a top-level timeout** (default 30s, overridable). Replace all `context.TODO()` in `internal/dns/route53.go` with the passed-in context so Route53 hangs become bounded.
+- **Signal handling in `cmd/update.go`**: use `signal.NotifyContext(ctx, SIGINT, SIGTERM)` so cron-killed updates cancel cleanly instead of leaving the cache inconsistent with an in-flight Route53 call.
+- Tests: move existing coverage into `internal/updater/updater_test.go`; add `OverrideIP` test; add a timeout test (Route53 mock that blocks → context cancels).
+- **Accept:** `dddns update` happy-path identical; hangs bounded; `SIGTERM` exits cleanly.
 
 **A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.**
 - Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner.
@@ -451,12 +484,13 @@ Ordered, each step an independent commit with passing tests.
 
 ### Phase E — Installer integration
 
-**E1. `scripts/install-on-unifi-os.sh` mode prompt.**
+**E1. `scripts/install-on-unifi-os.sh` — mode prompt + checksum verification.**
 - Interactive prompt; `--mode {cron|serve}` flag for non-interactive.
 - On `serve`: generate secret (via `dddns config rotate-secret --init`), populate `config.yaml`, print UI values in a clearly-framed block.
 - Calls `dddns config set-mode` to write the boot script.
 - Idempotent upgrade path preserves existing mode and config.
-- Tests: manual on-device, since this is bash against live UniFi filesystem.
+- **SHA-256 verification of the downloaded binary** against `checksums.txt` from the same GitHub release. Fail the install on mismatch or missing checksum file. Closes a supply-chain gap: GoReleaser already publishes the file; the installer just needs to fetch and verify it (~10 lines of bash).
+- Tests: manual on-device; add a negative test that tampers with the downloaded tarball and asserts the installer aborts before extracting.
 
 ### Phase F — Documentation
 
@@ -490,12 +524,13 @@ These are deliberately deferred to keep the initial surface small and well-teste
 
 | Phase | Commits | Net code added (approx) |
 |-------|---------|-------------------------|
-| A (refactor)    | 2  | ~0 (moved)              |
+| 0 (bug fixes)   | 5  | ~150 lines + tests      |
+| A (refactor)    | 2  | ~50 (context + signals) |
 | B (schema)      | 2  | ~150 lines              |
 | C (server core) | 5  | ~700 lines + tests      |
 | D (ops)         | 4  | ~300 lines              |
-| E (installer)   | 1  | ~80 bash lines          |
+| E (installer)   | 1  | ~100 bash lines         |
 | F (docs)        | 3  | (docs only)             |
-| **Total**       | **17 commits** | **~1,200 lines Go + docs** |
+| **Total**       | **22 commits** | **~1,450 lines Go + docs** |
 
 No new Go module dependencies (everything uses stdlib + existing deps).

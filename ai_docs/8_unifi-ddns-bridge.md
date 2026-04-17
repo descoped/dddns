@@ -447,10 +447,13 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (108 tests across 11 packages).
 **Findings:** No surprises. The dual `mapstructure`/`yaml` tag approach means one struct covers both config surfaces; B2 can embed it directly without re-declaring fields.
 
-**B2. Encrypt/decrypt `server.shared_secret` in secure config.**
-- `internal/config/secure_config.go`: new `secret_vault` field; encrypt via `crypto.EncryptString`, decrypt on load.
-- Tests: round-trip secret through `.secure`; device-key change → decryption fails.
-- **Accept:** `dddns secure enable` preserves the server block and encrypts the secret.
+**B2. Encrypt/decrypt `server.shared_secret` in secure config.** ✅ Completed
+- New `SecureServerConfig` struct mirrors `ServerConfig` but stores `SecretVault` in place of `SharedSecret`. `SecureConfig` gains `Server *SecureServerConfig` and a top-level `IPSource` field.
+- `SaveSecure` now calls `crypto.EncryptString(cfg.Server.SharedSecret)` into `secret_vault`; `LoadSecure` reverses it with `crypto.DecryptString`. `MigrateToSecure` picks this up transparently because it delegates to Save/Load.
+- New test file `internal/config/secure_config_test.go` with: `TestSaveLoadSecure_WithServerBlock` (full round-trip), `TestSaveSecure_SecretIsEncryptedAtRest` (grep the on-disk file for a distinctive plaintext marker — must not appear), `TestLoadSecure_NoServerBlock` (prior-shape .secure files still load), `TestLoadSecure_TamperedVault` (prepend bytes to the base64 vault → GCM rejects).
+
+**Status:** ✅ Complete. Full suite green (112 tests across 11 packages).
+**Findings:** The tamper test needed `os.Chmod(path, 0600)` before re-writing — `SaveSecure` writes `0400` (read-only by design). Worth noting for any future test that needs to exercise corruption-style scenarios against the on-disk `.secure` file.
 
 ### Phase C — Server core
 

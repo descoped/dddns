@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SecureConfig stores credentials in encrypted form
+// SecureConfig stores credentials in encrypted form.
 type SecureConfig struct {
 	// AWS settings
 	AWSRegion           string `yaml:"aws_region"`
@@ -23,6 +23,22 @@ type SecureConfig struct {
 
 	// Operational settings
 	IPCacheFile string `yaml:"ip_cache_file"`
+	IPSource    string `yaml:"ip_source,omitempty"`
+
+	// Server holds the serve-mode parameters. SecretVault is the encrypted
+	// form of the plaintext ServerConfig.SharedSecret.
+	Server *SecureServerConfig `yaml:"server,omitempty"`
+}
+
+// SecureServerConfig is the at-rest form of ServerConfig with the shared
+// secret replaced by a device-encrypted vault.
+type SecureServerConfig struct {
+	Bind          string   `yaml:"bind"`
+	SecretVault   string   `yaml:"secret_vault"`
+	AllowedCIDRs  []string `yaml:"allowed_cidrs"`
+	AuditLog      string   `yaml:"audit_log,omitempty"`
+	OnAuthFailure string   `yaml:"on_auth_failure,omitempty"`
+	WANInterface  string   `yaml:"wan_interface,omitempty"`
 }
 
 // SaveSecure saves config with encrypted credentials
@@ -41,6 +57,23 @@ func SaveSecure(cfg *Config, path string) error {
 		Hostname:            cfg.Hostname,
 		TTL:                 cfg.TTL,
 		IPCacheFile:         cfg.IPCacheFile,
+		IPSource:            cfg.IPSource,
+	}
+
+	// Encrypt the server block if present.
+	if cfg.Server != nil {
+		secretVault, err := crypto.EncryptString(cfg.Server.SharedSecret)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt server.shared_secret: %w", err)
+		}
+		secureCfg.Server = &SecureServerConfig{
+			Bind:          cfg.Server.Bind,
+			SecretVault:   secretVault,
+			AllowedCIDRs:  cfg.Server.AllowedCIDRs,
+			AuditLog:      cfg.Server.AuditLog,
+			OnAuthFailure: cfg.Server.OnAuthFailure,
+			WANInterface:  cfg.Server.WANInterface,
+		}
 	}
 
 	// Marshal to YAML
@@ -94,6 +127,23 @@ func LoadSecure(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
+	// Decrypt the server block if present.
+	var serverCfg *ServerConfig
+	if secureCfg.Server != nil {
+		sharedSecret, err := crypto.DecryptString(secureCfg.Server.SecretVault)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt server.secret_vault: %w", err)
+		}
+		serverCfg = &ServerConfig{
+			Bind:          secureCfg.Server.Bind,
+			SharedSecret:  sharedSecret,
+			AllowedCIDRs:  secureCfg.Server.AllowedCIDRs,
+			AuditLog:      secureCfg.Server.AuditLog,
+			OnAuthFailure: secureCfg.Server.OnAuthFailure,
+			WANInterface:  secureCfg.Server.WANInterface,
+		}
+	}
+
 	// Return regular config
 	return &Config{
 		AWSRegion:    secureCfg.AWSRegion,
@@ -103,6 +153,8 @@ func LoadSecure(path string) (*Config, error) {
 		Hostname:     secureCfg.Hostname,
 		TTL:          secureCfg.TTL,
 		IPCacheFile:  secureCfg.IPCacheFile,
+		IPSource:     secureCfg.IPSource,
+		Server:       serverCfg,
 	}, nil
 }
 

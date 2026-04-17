@@ -586,12 +586,17 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. No code changes.
 **Findings:** Several existing sections had stale assumptions — `--check-only` flag that never existed in the post-E1 installer, hand-edit-the-boot-script advice that would be overwritten by `set-mode`, and a cron-only monitoring story that left serve-mode users looking at the wrong log file. The Run Modes table up front is the biggest UX win: it answers "which one do I pick?" before the reader hits the install command.
 
-**F3. `docs/troubleshooting.md` — serve-mode issues.**
-- `badauth` → check UniFi UI password against current secret
-- `nohost` → hostname mismatch
-- `dnserr` → AWS IAM / connectivity
-- `911` → panic, check `/var/log/dddns-server.log`
-- Lockout behavior and how to wait it out vs. restart.
+**F3. `docs/troubleshooting.md` — serve-mode issues.** ✅ Completed
+- New **Serve Mode Issues** section between UDM-Specific and Update Not Working. Leads with a "Confirming the listener is alive" checklist (`pgrep`, `dddns serve status`, `dddns serve test`, `tail` on both logs in parallel) before diving into per-response diagnoses.
+- One subsection per dyndns code: `badauth` (rotated-out-of-sync secret), `badauth that looks like lockout` (how to tell the two apart via the audit log's `"auth":"locked"` marker, plus wait-it-out vs. `pkill` to reset), `nohost` (UI hostname ≠ `cfg.Hostname`), `notfqdn` (malformed `Server` URL missing `%h`/`%i`), `dnserr` (read the audit entry's `error` field; covers interface-no-public-IP, scoped IAM condition rejects, Route53 throttling), `911` (panic — file an issue).
+- Additional subsections: HTTP 403 via CIDR deny (explains this is the L1 default working correctly; shows how to opt-in LAN reachability), `connection refused` (daemon not running / wrong port), and mode-switch-didn't-apply (`set-mode` only writes the file — script must run).
+- **Quick Diagnostics** rewritten into three-way "always / cron / serve" grouping so users pick the right probes first.
+- **Installation Script Fails** updated to drop the obsolete `--check-only` flag and surface the new `--mode` / `--force` flags + the SHA-256 verification failure modes.
+- **AWS Access Denied** cross-links to the scoped IAM policy in `aws-setup.md` and names the normalised-record-name / UPSERT-only rules explicitly.
+- **Cron Not Running** clarifies it's cron-mode-only with a forward pointer to the serve-mode section.
+
+**Status:** ✅ Complete. No code changes.
+**Findings:** The biggest UX gain was collapsing the dyndns response codes into a single "read the audit log first" workflow. The audit log's `"error"` field already carries the underlying cause for `dnserr`, so pointing users at that one `tail | jq` invocation replaces a much longer decision tree.
 
 ### Phase G — Future enhancements (out of scope for v1)
 

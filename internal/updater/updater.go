@@ -16,7 +16,55 @@ import (
 	"github.com/descoped/dddns/internal/config"
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/dns"
+	"github.com/descoped/dddns/internal/profile"
+	"github.com/descoped/dddns/internal/wanip"
 )
+
+// Hooks for the IP-source dispatch. Exposed as package variables so tests
+// can swap in deterministic implementations without touching the OS or
+// network. Not part of the public API.
+var (
+	resolveLocalIP = func(iface string) (string, error) {
+		ip, err := wanip.FromInterface(iface)
+		if err != nil {
+			return "", err
+		}
+		return ip.String(), nil
+	}
+	resolveRemoteIP = myip.GetPublicIP
+	activeProfile   = func() string {
+		if profile.Current != nil {
+			return profile.Current.Name
+		}
+		return ""
+	}
+)
+
+// resolveIP picks between the local WAN interface and a remote lookup
+// based on cfg.IPSource. Empty / "auto" defaults to local on the UDM
+// profile, remote elsewhere.
+func resolveIP(cfg *config.Config) (string, error) {
+	source := cfg.IPSource
+	if source == "" || source == "auto" {
+		if activeProfile() == "udm" {
+			source = "local"
+		} else {
+			source = "remote"
+		}
+	}
+	switch source {
+	case "local":
+		iface := ""
+		if cfg.Server != nil {
+			iface = cfg.Server.WANInterface
+		}
+		return resolveLocalIP(iface)
+	case "remote":
+		return resolveRemoteIP()
+	default:
+		return "", fmt.Errorf("unknown ip_source %q", source)
+	}
+}
 
 // DNSClient is the subset of internal/dns.Route53Client that the updater
 // exercises. Declaring it here lets tests inject a mock without constructing
@@ -55,10 +103,10 @@ func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, err
 		}
 	}
 
-	// 1. Resolve current IP (override or lookup).
+	// 1. Resolve current IP (override, or dispatch on cfg.IPSource).
 	currentIP := opts.OverrideIP
 	if currentIP == "" {
-		detected, err := myip.GetPublicIP()
+		detected, err := resolveIP(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get public IP: %w", err)
 		}

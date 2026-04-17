@@ -245,6 +245,111 @@ func TestUpdate_DryRun(t *testing.T) {
 	}
 }
 
+// --- resolveIP dispatch tests ---
+
+// mockIPResolution swaps the package-level dispatch hooks for the
+// duration of the test. Any argument may be nil to keep the production
+// hook in place (not recommended — tests shouldn't hit the network).
+func mockIPResolution(t *testing.T, localFn func(string) (string, error), remoteFn func() (string, error), profileName string) {
+	t.Helper()
+	origLocal, origRemote, origProfile := resolveLocalIP, resolveRemoteIP, activeProfile
+	t.Cleanup(func() {
+		resolveLocalIP = origLocal
+		resolveRemoteIP = origRemote
+		activeProfile = origProfile
+	})
+	if localFn != nil {
+		resolveLocalIP = localFn
+	}
+	if remoteFn != nil {
+		resolveRemoteIP = remoteFn
+	}
+	activeProfile = func() string { return profileName }
+}
+
+func TestResolveIP_ExplicitLocal(t *testing.T) {
+	var captured string
+	mockIPResolution(t,
+		func(iface string) (string, error) { captured = iface; return "1.2.3.4", nil },
+		func() (string, error) { t.Fatal("remote should not be called"); return "", nil },
+		"linux")
+
+	ip, err := resolveIP(&config.Config{
+		IPSource: "local",
+		Server:   &config.ServerConfig{WANInterface: "eth8"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "1.2.3.4" {
+		t.Errorf("got %s", ip)
+	}
+	if captured != "eth8" {
+		t.Errorf("wan_interface not forwarded: got %q", captured)
+	}
+}
+
+func TestResolveIP_ExplicitRemote(t *testing.T) {
+	mockIPResolution(t,
+		func(string) (string, error) { t.Fatal("local should not be called"); return "", nil },
+		func() (string, error) { return "5.6.7.8", nil },
+		"udm") // even on UDM, explicit remote overrides the default
+
+	ip, err := resolveIP(&config.Config{IPSource: "remote"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "5.6.7.8" {
+		t.Errorf("got %s", ip)
+	}
+}
+
+func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
+	mockIPResolution(t,
+		func(iface string) (string, error) {
+			if iface != "" {
+				t.Errorf("expected empty iface for auto-detect, got %q", iface)
+			}
+			return "81.191.174.72", nil
+		},
+		func() (string, error) { t.Fatal("remote should not be called on UDM auto"); return "", nil },
+		"udm")
+
+	ip, err := resolveIP(&config.Config{IPSource: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "81.191.174.72" {
+		t.Errorf("got %s", ip)
+	}
+}
+
+func TestResolveIP_AutoOffUDM_PicksRemote(t *testing.T) {
+	mockIPResolution(t,
+		func(string) (string, error) { t.Fatal("local should not be called on non-UDM auto"); return "", nil },
+		func() (string, error) { return "5.6.7.8", nil },
+		"macos")
+
+	ip, err := resolveIP(&config.Config{IPSource: "auto"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip != "5.6.7.8" {
+		t.Errorf("got %s", ip)
+	}
+}
+
+func TestResolveIP_InvalidSource(t *testing.T) {
+	mockIPResolution(t,
+		func(string) (string, error) { return "", nil },
+		func() (string, error) { return "", nil },
+		"linux")
+
+	if _, err := resolveIP(&config.Config{IPSource: "bogus"}); err == nil {
+		t.Error("expected error for invalid ip_source")
+	}
+}
+
 // TestUpdate_ContextTimeout verifies that a slow Route53 call is bounded
 // by the caller's context deadline.
 func TestUpdate_ContextTimeout(t *testing.T) {

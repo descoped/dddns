@@ -46,7 +46,7 @@ archives:
     files:
       - LICENSE
       - docs/README.md
-      - docs/QUICK_START.md
+      - docs/quick-start.md
 
 checksum:
   name_template: 'checksums.txt'

@@ -232,7 +232,7 @@ Error: Throttling: Rate exceeded
 
 ## Next Steps
 
-1. Return to [Quick Start Guide](QUICK_START.md) to install dddns
+1. Return to [Quick Start Guide](quick-start.md) to install dddns
 2. Use your Hosted Zone ID in dddns configuration
 3. Configure AWS profile with IAM user credentials
 4. Test with `dddns update --dry-run`

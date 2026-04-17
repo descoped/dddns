@@ -52,7 +52,7 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 
 ## Quick Start
 
-> **📋 Prerequisites**: Need to set up AWS Route53 first? See the [AWS Setup Guide](docs/AWS_SETUP.md) for step-by-step instructions.
+> **📋 Prerequisites**: Need to set up AWS Route53 first? See the [AWS Setup Guide](docs/aws-setup.md) for step-by-step instructions.
 
 ### Ubiquiti Dream Machine (UDM/UDR)
 
@@ -67,7 +67,7 @@ dddns config init
 dddns update --dry-run
 ```
 
-> **⚠️ Compatibility Note**: Check [supported models and requirements](docs/INSTALLATION.md#supported-models) before installation.
+> **⚠️ Compatibility Note**: Check [supported models and requirements](docs/installation.md#supported-models) before installation.
 
 ### macOS
 
@@ -123,13 +123,13 @@ dddns --version                                # Show version
 
 ## Documentation
 
-- [Quick Start](docs/QUICK_START.md) - Get running in 5 minutes
-- [AWS Setup Guide](docs/AWS_SETUP.md) - **Start here if new to Route53** - Complete AWS setup
-- [Installation Guide](docs/INSTALLATION.md) - Detailed installation instructions
-- [Configuration](docs/CONFIGURATION.md) - Configuration options
-- [Commands](docs/COMMANDS.md) - Full command reference
-- [UDM Guide](docs/UDM_GUIDE.md) - Ubiquiti-specific setup
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
+- [Quick Start](docs/quick-start.md) - Get running in 5 minutes
+- [AWS Setup Guide](docs/aws-setup.md) - **Start here if new to Route53** - Complete AWS setup
+- [Installation Guide](docs/installation.md) - Detailed installation instructions
+- [Configuration](docs/configuration.md) - Configuration options
+- [Commands](docs/commands.md) - Full command reference
+- [UDM Guide](docs/udm-guide.md) - Ubiquiti-specific setup
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
 
 ## How It Works
 
@@ -218,7 +218,7 @@ GitHub Actions automatically builds and releases binaries for all platforms.
 
 ## Configuration
 
-> **Need AWS Route53?** Follow the [AWS Setup Guide](docs/AWS_SETUP.md) to create your hosted zone and IAM credentials first.
+> **Need AWS Route53?** Follow the [AWS Setup Guide](docs/aws-setup.md) to create your hosted zone and IAM credentials first.
 
 ### Example Configuration
 
@@ -252,7 +252,7 @@ dddns secure enable
 
 If you encounter any problems:
 
-1. Check the [Troubleshooting Guide](docs/TROUBLESHOOTING.md) first
+1. Check the [Troubleshooting Guide](docs/troubleshooting.md) first
 2. Search [existing issues](https://github.com/descoped/dddns/issues) to see if it's already reported
 3. Create a [new issue](https://github.com/descoped/dddns/issues/new) with:
    - Your platform (UDM model, OS version)

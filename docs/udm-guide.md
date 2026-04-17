@@ -484,6 +484,6 @@ dddns has minimal impact on UDM:
 
 ## Next Steps
 
-- [Configuration Guide](CONFIGURATION.md)
-- [Command Reference](COMMANDS.md)
-- [Troubleshooting Guide](TROUBLESHOOTING.md)
+- [Configuration Guide](configuration.md)
+- [Command Reference](commands.md)
+- [Troubleshooting Guide](troubleshooting.md)

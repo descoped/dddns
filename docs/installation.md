@@ -463,6 +463,6 @@ rm ~/Library/LaunchAgents/com.dddns.updater.plist
 
 ## Next Steps
 
-- [Configure dddns](CONFIGURATION.md)
-- [Command Reference](COMMANDS.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
+- [Configure dddns](configuration.md)
+- [Command Reference](commands.md)
+- [Troubleshooting](troubleshooting.md)

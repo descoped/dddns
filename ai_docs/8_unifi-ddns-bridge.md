@@ -215,7 +215,7 @@ The Route53 IAM user's policy MUST be scoped to the specific record and action. 
 
 With this policy, stolen AWS credentials cannot: delete the record, change the TTL, change MX/NS/TXT/CNAME/AAAA, or touch any other record in the zone. They can only UPSERT an A record named exactly `home.route-66.no`. Combined with L4 IP verification, there is effectively nothing useful an attacker can do with them.
 
-This belongs in `docs/AWS_SETUP.md` as the canonical policy — not as an advanced suggestion.
+This belongs in `docs/aws-setup.md` as the canonical policy — not as an advanced suggestion.
 
 ## 8. Package Layout
 
@@ -564,16 +564,16 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase F — Documentation
 
-**F1. `docs/AWS_SETUP.md` — scoped IAM.**
+**F1. `docs/aws-setup.md` — scoped IAM.**
 - Replace existing IAM guidance with the §7 policy as the *only* supported option.
 - Step-by-step IAM user / policy creation with condition keys.
 - Explain the blast-radius reduction.
 
-**F2. `docs/UDM_GUIDE.md` — serve mode.**
+**F2. `docs/udm-guide.md` — serve mode.**
 - New section covering serve-mode install, UI setup, rotation, log files, mode switching.
 - Update the "Monitoring" section to cover the audit log and distinguish it from the operational log.
 
-**F3. `docs/TROUBLESHOOTING.md` — serve-mode issues.**
+**F3. `docs/troubleshooting.md` — serve-mode issues.**
 - `badauth` → check UniFi UI password against current secret
 - `nohost` → hostname mismatch
 - `dnserr` → AWS IAM / connectivity

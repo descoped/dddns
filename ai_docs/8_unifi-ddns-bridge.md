@@ -499,12 +499,15 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (173 tests across 13 packages).
 **Findings:** Keeping CIDR + auth in the handler (instead of separate `http.Handler` middleware) let me build one `AuditEntry` across every outcome and emit it from a single point. A later refactor can split middleware if needed; current shape is simple and tested end-to-end.
 
-**C6. `internal/server/server.go` + `cmd/serve.go`.**
-- `net.Listen` on `cfg.Server.Bind`; middleware chain: cidr → auth → handler.
-- Fail-closed config checks before `Listen`.
-- Graceful shutdown on SIGINT/SIGTERM.
-- `dddns serve` cobra command.
-- Tests: integration test with `httptest.NewServer` over the middleware chain.
+**C6. `internal/server/server.go` + `cmd/serve.go`.** ✅ Completed
+- New `Server` type wraps `http.Server` with a constructor that validates both `Config` and `ServerConfig` (fail-closed per L6) and constructs all the per-request dependencies (`Authenticator`, `AuditLog`, `StatusWriter`, `Handler`). The handler is mounted at `/nic/update` on an `http.ServeMux`. HTTP timeouts: `ReadHeaderTimeout=5s`, `ReadTimeout=10s`, `WriteTimeout=35s` (must exceed the handler's 30s budget), `IdleTimeout=30s`.
+- `Server.Run(ctx)` blocks until ctx is cancelled, then calls `http.Server.Shutdown` with a 5-second deadline to drain in-flight requests. Clean exit on both `SIGINT` and `SIGTERM`.
+- `cmd/serve.go` wires the cobra `dddns serve` command: loads config, constructs the server, wraps ctx with `signal.NotifyContext`, calls `Run`.
+- Paths: the audit log honours `cfg.Server.AuditLog` if set, otherwise falls back to `<cfg.IPCacheFile dir>/serve-audit.log`. The status file is always `<cfg.IPCacheFile dir>/serve-status.json`.
+- 6 new tests in `server_test.go`: constructor with a valid config, constructor rejecting an invalid top-level config, missing server block, invalid server block; an end-to-end integration test that spins up `httptest.NewServer` over the wired handler chain and asserts `good 81.191.174.72` comes back over a real HTTP socket; a graceful-shutdown test that binds an ephemeral port, serves a request, cancels the context, and verifies `Run` returns within 2s without error.
+
+**Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (179 tests across 13 packages). `dddns serve` appears in the CLI help.
+**Findings:** The `Server.binder` indirection turned the graceful-shutdown test from "start, guess the port, hope" into a deterministic ephemeral-port bind. Worth keeping — a future signal-reload test will also need it.
 
 ### Phase D — Operational commands
 

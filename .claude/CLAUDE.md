@@ -27,37 +27,57 @@ This file provides guidance to Claude Code when working with dddns.
 ## Architecture
 
 ### Core Flow
-1. Check public IP via checkip.amazonaws.com
-2. Compare with cached IP from last run
-3. Update Route53 A record if changed
-4. Cache new IP and exit
+Two run modes, selected at install time (exclusive):
+
+**Cron mode** (polling):
+1. Resolve current public IP via `cfg.IPSource` — `remote` calls `checkip.amazonaws.com`, `local` reads the WAN interface, `auto` picks based on platform.
+2. Compare with cached IP from last run.
+3. Update Route53 A record if changed.
+4. Cache new IP and exit.
+
+**Serve mode** (event-driven, UniFi-only):
+1. `dddns serve` listens on `127.0.0.1:53353` for dyndns v2 requests from UniFi's built-in `inadyn`.
+2. Per request: CIDR check → constant-time Basic Auth → hostname match → read local WAN IP (never trust `myip` query param) → Route53 UPSERT → audit log.
+3. Supervised by systemd; restart-on-failure.
 
 ### Project Structure
 ```
-cmd/                      # CLI commands
-├── root.go              # Main command setup, config loading
-├── config.go            # Config init/check commands
-├── ip.go                # IP display command
-├── update.go            # Main update logic
-├── verify.go            # DNS verification
-└── secure.go            # Secure config management
+cmd/                           # CLI commands
+├── root.go                   # Main command setup, config loading
+├── config.go                 # Config init/check commands
+├── config_set_mode.go        # dddns config set-mode {cron|serve}
+├── config_rotate_secret.go   # dddns config rotate-secret
+├── ip.go                     # IP display command
+├── update.go                 # Thin shim over internal/updater
+├── verify.go                 # DNS verification
+├── secure.go                 # Secure config management
+└── serve.go                  # dddns serve / serve status / serve test
 
 internal/
-├── config/              # Configuration management
-│   ├── config.go        # YAML config handling
-│   └── secure_config.go # Encrypted config support
-├── crypto/              # Security layer
-│   └── device_crypto.go # Hardware-based encryption
-├── dns/                 # AWS integration
-│   └── route53.go       # Route53 client
-├── profile/             # Platform detection
-│   └── profile.go       # OS/device-specific paths
-├── commands/myip/       # IP utilities
-│   └── myip.go          # Public IP detection
-├── constants/           # Shared constants
-│   └── permissions.go   # File permission constants
-└── version/             # Version info
-    └── version.go       # Build-time version injection
+├── bootscript/               # Generates /data/on_boot.d/20-dddns.sh per mode
+├── config/                   # Configuration management
+│   ├── config.go             # YAML config + ServerConfig + IPSource
+│   └── secure_config.go      # Encrypted config + SecureServerConfig (SecretVault)
+├── crypto/                   # Security layer
+│   └── device_crypto.go      # AES-256-GCM + EncryptString/DecryptString primitives
+├── dns/                      # AWS integration
+│   └── route53.go            # Route53 client (context-plumbed)
+├── profile/                  # Platform detection
+│   └── profile.go            # OS/device-specific paths
+├── server/                   # Serve-mode HTTP handler
+│   ├── server.go             # Lifecycle + fail-closed startup
+│   ├── handler.go            # dyndns v2 handler
+│   ├── auth.go               # Constant-time + sliding-window lockout
+│   ├── cidr.go               # RemoteAddr allowlist
+│   ├── audit.go              # JSONL audit log with rotation
+│   └── status.go             # serve-status.json writer/reader
+├── updater/                  # Extracted update flow
+│   └── updater.go            # Update(ctx, cfg, Options); DNSClient interface
+├── wanip/                    # Local WAN IP lookup with auto-detect
+│   └── wanip.go              # Rejects RFC1918 / CGNAT / link-local / IPv6
+├── commands/myip/            # Public IP detection + ValidatePublicIP
+├── constants/                # Shared constants
+└── version/                  # Build-time version injection
 ```
 
 ## Key Features Implemented
@@ -82,8 +102,15 @@ internal/
 dddns update [--dry-run] [--force] [--quiet]
 dddns config init
 dddns config check
+dddns config set-mode {cron|serve}   # Switch run mode; rewrites boot script
+dddns config rotate-secret [--init]  # Rotate serve-mode shared secret
 dddns ip
 dddns verify
+
+# Serve mode (UniFi bridge)
+dddns serve                          # Start listener (blocks)
+dddns serve status                   # Show last request / auth outcome
+dddns serve test                     # Loopback Basic-Auth'd test request
 
 # Security
 dddns secure enable       # Convert to encrypted config
@@ -146,11 +173,13 @@ var Commit = "none"
 ## Testing
 
 ### Unit Tests
-- Config loading and validation
-- IP detection and proxy checking
-- Encryption/decryption
+- Config loading and validation (`ServerConfig` fail-closed checks)
+- IP detection and `ValidatePublicIP` stdlib validator
+- Encryption/decryption (`EncryptString`/`DecryptString` round-trip + GCM tamper)
 - Platform detection
 - Route53 mocking
+- Serve-mode handler (CIDR / auth / lockout / audit / status — all `httptest`-backed, no AWS)
+- Boot-script generation per mode
 
 ### Integration Tests
 - Real AWS API calls (when credentials available)
@@ -187,25 +216,28 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-
 ✅ **Completed**
 - Core DNS update functionality
 - Cross-platform support
-- Secure credential storage
+- Secure credential storage (AES-256-GCM, device-derived key)
 - Platform auto-detection
 - Persistent caching
-- Proxy/VPN detection
-- GoReleaser integration
+- UniFi serve mode (event-driven via inadyn push, systemd-supervised)
+- Scoped Route53 IAM policy (record-level UPSERT via condition keys)
+- Secret rotation (`dddns config rotate-secret`)
+- Mode switching (`dddns config set-mode {cron|serve}`)
+- GoReleaser integration with SHA-256 release verification
 - Comprehensive documentation
 
 ## Do NOT Add Unless Explicitly Asked
 
 - ❌ Metrics/monitoring/telemetry
-- ❌ Web UI or REST API
-- ❌ Multiple DNS providers (Route53 only)
-- ❌ Daemon/service mode
+- ❌ Web UI or user-facing REST API (the serve-mode `/nic/update` endpoint is a push receiver for inadyn, not a user-facing API)
+- ⚠️ Multiple DNS providers — only per the design in `ai_docs/0_provider-architecture.md` (HTTP-only). Do not add a provider outside that framework.
 - ❌ Complex retry logic
 - ❌ Service discovery
 - ❌ Container orchestration
 - ❌ Database storage
-- ❌ Configuration hot-reload
+- ❌ Configuration hot-reload (rotate-secret / set-mode restart the supervisor)
 - ❌ Plugin system
+- ❌ TPM / HSM integration
 
 ## Important Files
 

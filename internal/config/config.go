@@ -10,35 +10,36 @@ import (
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/profile"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config holds all configuration for dddns.
 type Config struct {
 	// AWS settings
-	AWSRegion    string `mapstructure:"aws_region"`
-	AWSAccessKey string `mapstructure:"aws_access_key"` // For standalone operation
-	AWSSecretKey string `mapstructure:"aws_secret_key"` // For standalone operation
+	AWSRegion    string `mapstructure:"aws_region"    yaml:"aws_region"`
+	AWSAccessKey string `mapstructure:"aws_access_key" yaml:"aws_access_key"`
+	AWSSecretKey string `mapstructure:"aws_secret_key" yaml:"aws_secret_key"`
 
 	// DNS settings (required)
-	HostedZoneID string `mapstructure:"hosted_zone_id"`
-	Hostname     string `mapstructure:"hostname"`
-	TTL          int64  `mapstructure:"ttl"`
+	HostedZoneID string `mapstructure:"hosted_zone_id" yaml:"hosted_zone_id"`
+	Hostname     string `mapstructure:"hostname"       yaml:"hostname"`
+	TTL          int64  `mapstructure:"ttl"            yaml:"ttl"`
 
 	// Operational settings
-	IPCacheFile string `mapstructure:"ip_cache_file"`
-	ForceUpdate bool   `mapstructure:"force_update"`
-	DryRun      bool   `mapstructure:"dry_run"`
+	IPCacheFile string `mapstructure:"ip_cache_file" yaml:"ip_cache_file"`
+	ForceUpdate bool   `mapstructure:"force_update"  yaml:"-"`
+	DryRun      bool   `mapstructure:"dry_run"       yaml:"-"`
 
 	// IPSource overrides where dddns obtains the current public IP.
 	// Values: "" or "auto" (mode-driven default), "local" (read the WAN
 	// interface), "remote" (call checkip.amazonaws.com). Serve mode always
 	// reads the local interface regardless of this setting.
-	IPSource string `mapstructure:"ip_source"`
+	IPSource string `mapstructure:"ip_source" yaml:"ip_source,omitempty"`
 
 	// Server holds parameters for serve mode (dddns serve). nil when the
 	// `server:` block is absent from the config file, which disables serve
 	// mode. See ServerConfig for fields.
-	Server *ServerConfig `mapstructure:"server"`
+	Server *ServerConfig `mapstructure:"server" yaml:"server,omitempty"`
 }
 
 // ServerConfig holds parameters for serve mode (dddns serve).
@@ -146,6 +147,25 @@ func (c *Config) Validate() error {
 		// ok
 	default:
 		return fmt.Errorf("ip_source %q must be one of: auto, local, remote", c.IPSource)
+	}
+	return nil
+}
+
+// SavePlaintext serializes cfg to YAML and writes it to path with the
+// standard plaintext permissions (0600). This rewrites the entire file;
+// comments and formatting in any previous version are discarded.
+//
+// Use SaveSecure for encrypted-at-rest storage.
+func SavePlaintext(cfg *Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), constants.ConfigDirPerm); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, constants.ConfigFilePerm); err != nil {
+		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
 }

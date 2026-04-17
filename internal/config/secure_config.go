@@ -88,11 +88,22 @@ func SaveSecure(cfg *Config, path string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Write with secure permissions (read-only)
+	// When re-writing over an existing .secure file, its 0400 perms
+	// prevent os.WriteFile from truncating it. Chmod back to owner-
+	// writable first; the final chmod below restores 0400.
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm() == constants.SecureConfigPerm {
+		if err := os.Chmod(path, constants.ConfigFilePerm); err != nil {
+			return fmt.Errorf("chmod secure config for rewrite: %w", err)
+		}
+	}
+
 	if err := os.WriteFile(path, data, constants.SecureConfigPerm); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
-
+	// Ensure the final perm is 0400 even if the file pre-existed at 0600.
+	if err := os.Chmod(path, constants.SecureConfigPerm); err != nil {
+		return fmt.Errorf("chmod secure config: %w", err)
+	}
 	return nil
 }
 

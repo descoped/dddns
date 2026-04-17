@@ -530,12 +530,15 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (189 tests across 13 packages). `dddns serve test --help` visible in the CLI.
 **Findings:** No surprises. The `performServeTest` split is a repeat of the updater-extraction pattern — pure function for the logic, cobra thin wrapper for flag/config wiring — and keeps the tests network-stub-only.
 
-**D3. `dddns config rotate-secret`.**
-- Generates 256-bit secret via `crypto/rand`.
-- Writes back to the currently-loaded config (secure or plain).
-- Prints once, with framed output and UI-update instructions.
-- Logs rotation to audit log.
-- Tests: round-trip, two rotations produce different secrets, audit entry written.
+**D3. `dddns config rotate-secret`.** ✅ Completed
+- New subcommand: `dddns config rotate-secret [--init]`. Generates a 256-bit random value via `crypto/rand` → 64 lowercase hex chars → writes back to the currently-loaded config. The `.yaml` vs `.secure` suffix is detected from the resolved config path and the appropriate save routine is used (`SavePlaintext` or `SaveSecure`).
+- `--init` creates a default server block (`127.0.0.1:53353` bind, `127.0.0.0/8` allowlist — the fail-closed loopback default) when one does not already exist. This is how the installer (E1) will seed serve mode.
+- Added `config.SavePlaintext(cfg, path)` helper using `yaml.v3`. The `Config` struct gained `yaml:"…"` tags alongside its existing `mapstructure` ones so the struct round-trips through both loaders; `ForceUpdate`/`DryRun` are tagged `yaml:"-"` since they're flag-only, not persisted.
+- The new secret is printed exactly once inside a framed block with UI-update instructions. A best-effort audit-log entry (action=`rotate-secret`) is appended via the same `AuditLog` the handler uses; failure there does not prevent printing.
+- 5 tests: plaintext round-trip (other fields preserved, secret is 64 hex), two consecutive rotations produce different secrets, `--init` creates the default block when missing, secure-config rotation re-encrypts and leaves no plaintext marker, and a `generateSecret` uniqueness/length check.
+
+**Status:** ✅ Complete. Full suite green (194 tests across 13 packages). `dddns config rotate-secret --help` visible in the CLI.
+**Findings:** `SaveSecure` needed a small fix — its files are written 0400 (read-only), so a second call on an existing file couldn't truncate. Added a chmod-to-0600, write, chmod-to-0400 dance. Same root cause as the tamper test in B2 surfaced in reverse.
 
 **D4. `internal/bootscript` + `dddns config set-mode`.**
 - Pure function: `Generate(mode, paths) string` returns the correct boot script body.

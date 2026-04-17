@@ -438,12 +438,14 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase B — Config schema (no consumer yet)
 
-**B1. Add `ServerConfig` struct and `IPSource` field.**
-- `internal/config/config.go`: new `ServerConfig` struct with `Bind`, `SharedSecret`, `AllowedCIDRs`, `AuditLog`, `OnAuthFailure`, `WANInterface`. Added as optional `*ServerConfig` on `Config`.
-- Top-level `IPSource string` on `Config` (values: `""`/`"auto"` default, `"local"`, `"remote"`). Follows the existing convention — if set in config it overrides the mode-based default; if unset, the default is mode-driven (serve → local always; cron → `local` on UDM profile, `remote` elsewhere).
-- `ServerConfig.Validate()` method: CIDRs parseable, bind is `host:port`, shared secret non-empty.
-- Tests: YAML round-trip; `ip_source` override parsed; validation errors for each missing server field.
-- **Accept:** existing configs load without the block; new block + `ip_source` load correctly.
+**B1. Add `ServerConfig` struct and `IPSource` field.** ✅ Completed
+- `internal/config/config.go`: new `ServerConfig` struct with `Bind`, `SharedSecret`, `AllowedCIDRs`, `AuditLog`, `OnAuthFailure`, `WANInterface`. Added as optional `*ServerConfig` on `Config`. Dual struct tags (`mapstructure` + `yaml`) so the same type can be embedded into `SecureConfig` in B2 without duplication.
+- `IPSource string` added top-level on `Config`. Accepted values: `""`/`"auto"` (default, mode-driven), `"local"`, `"remote"`. Config.Validate rejects anything else.
+- `ServerConfig.Validate()` returns clear errors for: missing bind, bad bind (not `host:port`), missing shared secret, empty allowed_cidrs (fail-closed per §3 L6), and unparseable CIDR entries. Config.Validate intentionally does *not* call it — cron-only users with no `server:` block shouldn't hit serve-mode validation.
+- Tests added in `internal/config/config_test.go`: `TestLoadConfig_WithServerBlock` (full round-trip), `TestLoadConfig_NoServerBlock` (existing configs still load; `Server` stays nil), `TestConfigValidate_BadIPSource`, `TestServerConfigValidate` (table-driven with the 5 failure modes above).
+
+**Status:** ✅ Complete. Full suite green (108 tests across 11 packages).
+**Findings:** No surprises. The dual `mapstructure`/`yaml` tag approach means one struct covers both config surfaces; B2 can embed it directly without re-declaring fields.
 
 **B2. Encrypt/decrypt `server.shared_secret` in secure config.**
 - `internal/config/secure_config.go`: new `secret_vault` field; encrypt via `crypto.EncryptString`, decrypt on load.

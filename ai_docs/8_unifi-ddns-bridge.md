@@ -55,9 +55,9 @@ A supplementary run mode for dddns on UniFi Dream devices (UDR, UDR7, UDM/UDM-Pr
 
 This is where a compromised secret stops mattering.
 
-**Independent IP verification.** The handler does NOT use the `myip` query parameter as an instruction. It calls `myip.GetPublicIP()` (same code path as `dddns update`) to discover the router's real current public IP and pushes *that* to Route53. The `myip` param is used only as:
-- A log entry (for detecting an attacker trying to push a chosen IP),
-- Nothing else.
+**Authoritative local WAN IP.** The handler does NOT use the `myip` query parameter as an instruction. It reads the router's real current public IP directly from the WAN interface via the OS (`net.InterfaceAddrs()` filtered for the WAN iface, auto-detected or configured via `server.wan_interface`). The local interface state is the same source `inadyn` reads — they agree by construction except during a microsecond-long DHCP transition. The `myip` query param is used only as a sanity check: if it disagrees with the local IP, the discrepancy is logged as an audit anomaly and the local IP is used for the Route53 UPSERT.
+
+**Why local, not `checkip.amazonaws.com`:** the local interface IP is authoritative (UniFi's own view of the WAN), fast (no remote call), attacker-resistant (forging requires root on the router), and available during a WAN flap when outbound connectivity may not be. A remote checkip call is neither more correct nor more secure — just slower and dependent on a third party.
 
 **Consequence:** an attacker with the shared secret can only cause the record to point to the router's actual WAN IP — which is what it already points to. Compromise becomes a nuisance (wasted Route53 API calls, throttled by L3), not a redirection.
 
@@ -99,7 +99,7 @@ inadyn ──HTTP GET──► 127.0.0.1:53353/nic/update?hostname=…&myip=…
                                ▼   ▼   ▼
                              cidr auth handler
                                          │
-                                         ├──► myip.GetPublicIP()  (verify, not trust)
+                                         ├──► internal/wanip — read local WAN iface
                                          ▼
                                 internal/updater
                                          │
@@ -117,10 +117,10 @@ inadyn ──HTTP GET──► 127.0.0.1:53353/nic/update?hostname=…&myip=…
    - Method is `GET` → else HTTP 405.
    - `hostname` equals `cfg.Hostname` → else `nohost`.
    - `myip` parses to a public IPv4 → else log anomaly (don't reject; we don't trust it anyway).
-6. Handler calls `myip.GetPublicIP()` → `verifiedIP`.
-7. If `verifiedIP` ≠ claimed `myip`: log as anomaly; continue using `verifiedIP`.
-8. Handler calls `updater.Update(ctx, cfg, Options{})` — updater internally fetches IP the same way, so this step is idempotent with step 6 at the cost of one extra HTTP call. *(Decision below: updater takes `Options{OverrideIP: verifiedIP}` to avoid the double fetch. See §9.)*
-9. Handler writes an audit log entry with all fields.
+6. Handler calls `wanip.FromInterface(cfg.Server.WANInterface)` → `localIP`. Reads the WAN interface's current public IPv4 directly from the OS (no network round-trip, no third-party dependency).
+7. If the claimed `myip` ≠ `localIP`: log as anomaly; use `localIP` regardless.
+8. Handler calls `updater.Update(ctx, cfg, Options{OverrideIP: localIP})` — updater skips its own IP lookup since the caller provided an authoritative value.
+9. Handler writes an audit log entry with `myip_claimed`, `localIP`, `auth_outcome`, `action`, and `route53_change_id`.
 10. Handler maps `updater.Result.Action` to a dyndns response (§10).
 
 ## 6. Config Schema
@@ -136,6 +136,7 @@ hostname: home.route-66.no
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
 skip_proxy_check: false
+ip_source: auto                      # auto | local | remote (see §3 L4)
 
 server:
   bind: "127.0.0.1:53353"           # loopback only by default
@@ -144,7 +145,15 @@ server:
     - "127.0.0.0/8"
   audit_log: /var/log/dddns-audit.log
   on_auth_failure: ""                # optional shell hook; empty = disabled
+  wan_interface: ""                  # empty = auto-detect; e.g. "eth8" or "pppoe-wan0"
 ```
+
+`ip_source` defaults:
+- `auto` — `local` if UDM profile detected, else `remote`. No regression for existing cron users on laptops/Docker.
+- `local` — read the WAN interface directly. Required for serve mode, optional for cron-on-UniFi.
+- `remote` — call `checkip.amazonaws.com` (current cron behavior). Needed for non-router platforms.
+
+Serve mode always uses local, regardless of this setting.
 
 LAN-reachable opt-in example:
 ```yaml
@@ -172,6 +181,7 @@ server:
   allowed_cidrs: ["127.0.0.0/8"]
   audit_log: /var/log/dddns-audit.log
   on_auth_failure: ""
+  wan_interface: ""
 ```
 
 ## 7. AWS IAM Policy (Mandatory Scoping)
@@ -220,6 +230,8 @@ cmd/
 internal/
 ├── updater/
 │   └── updater.go           [NEW: DRY core update logic]
+├── wanip/
+│   └── wanip.go             [NEW: local WAN interface IP lookup with auto-detect]
 ├── server/
 │   ├── server.go            [NEW: net.Listen, graceful shutdown, fail-closed checks]
 │   ├── handler.go           [NEW: dyndns protocol handler, IP verification]
@@ -395,9 +407,10 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - Tests: empty, dotted, undotted hostnames.
 - **Accept:** no panic; behavior identical for non-empty input.
 
-**0.5. Soft-fail proxy check.**
+**0.5. Soft-fail proxy check** (relevant only to `ip_source: remote`).
 - `cmd/update.go` — on `IsProxyIP` error, log a warning and proceed rather than aborting the update. Today an ip-api.com outage (free tier: 45 req/min) halts every cron tick.
-- Add optional `proxy_check_strict: bool` config field (default `false` = soft). Strict mode preserves the current hard-fail semantics for users who want it.
+- Add optional `proxy_check_strict: bool` config field (default `false` = soft).
+- Note: in `ip_source: local` mode there is no proxy to detect — we read the interface directly. Phase G contains the retirement path for `IsProxyIP` entirely.
 - Tests: mock `IsProxyIP` returning an error → strict=false proceeds, strict=true aborts.
 - **Accept:** third-party outages no longer block DNS updates by default.
 
@@ -445,14 +458,21 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - JSONL writer; open-append, size-based rotation at 10 MB; atomic write.
 - Tests: concurrent writes serialize correctly, rotation triggers at threshold.
 
-**C4. `internal/server/handler.go` + unit tests.**
-- Parse query, validate method, hostname, (loose) myip sanity.
-- Call `myip.GetPublicIP()` → `verifiedIP`.
-- Call `updater.Update(ctx, cfg, Options{OverrideIP: verifiedIP})`.
-- Emit audit log entry; map `Result.Action` to dyndns body.
-- Tests: table-driven for every row of §10; mock `myip` and `updater`.
+**C4. `internal/wanip` + unit tests.**
+- `FromInterface(ifaceName string) (net.IP, error)` — returns the first non-loopback, non-private, non-link-local IPv4 on the named interface. Empty `ifaceName` triggers auto-detection: pick the interface on the default route, filtered for a publicly-routable IPv4.
+- Treat CGNAT (`100.64.0.0/10`) as non-usable (CGNAT users can't usefully run dddns anyway).
+- Tests: mocked interface list covering dotted-quad IPv4, RFC1918, CGNAT, PPPoE (`ppp0`), no-address states; fake default-route file.
+- Integrates with `cmd/update.go` via the `ip_source` config field (see §6).
 
-**C5. `internal/server/server.go` + `cmd/serve.go`.**
+**C5. `internal/server/handler.go` + unit tests.**
+- Parse query, validate method, hostname, (loose) myip sanity.
+- Call `wanip.FromInterface(cfg.Server.WANInterface)` → `localIP`.
+- If claimed `myip` ≠ `localIP`: record anomaly in the audit entry.
+- Call `updater.Update(ctx, cfg, Options{OverrideIP: localIP})`.
+- Emit audit log entry; map `Result.Action` to dyndns body.
+- Tests: table-driven for every row of §10; mock `wanip` and `updater`.
+
+**C6. `internal/server/server.go` + `cmd/serve.go`.**
 - `net.Listen` on `cfg.Server.Bind`; middleware chain: cidr → auth → handler.
 - Fail-closed config checks before `Listen`.
 - Graceful shutdown on SIGINT/SIGTERM.
@@ -519,6 +539,7 @@ These are deliberately deferred to keep the initial surface small and well-teste
 - **G3.** Non-root execution — add a `dddns` system user, adjust config file ownership, use `setcap` for any privileged operations. Requires installer rework.
 - **G4.** CloudTrail / SNS integration guide in docs (detect out-of-band Route53 changes).
 - **G5.** Pluggable notification backend for `on_auth_failure` (ntfy, Slack webhook, SMTP) as a small built-in alternative to shell hooks.
+- **G6.** Retire the `ip-api.com` dependency. Once `ip_source: local` is the default for router platforms, the only caller of `IsProxyIP` is `ip_source: remote` on non-router platforms. Consider dropping the proxy check entirely — a returned IP that fails `net.IP.IsGlobalUnicast()` or falls into reserved ranges can be rejected without consulting a third-party API.
 
 ### Estimated Scope
 
@@ -527,10 +548,10 @@ These are deliberately deferred to keep the initial surface small and well-teste
 | 0 (bug fixes)   | 5  | ~150 lines + tests      |
 | A (refactor)    | 2  | ~50 (context + signals) |
 | B (schema)      | 2  | ~150 lines              |
-| C (server core) | 5  | ~700 lines + tests      |
+| C (server core) | 6  | ~800 lines + tests      |
 | D (ops)         | 4  | ~300 lines              |
 | E (installer)   | 1  | ~100 bash lines         |
 | F (docs)        | 3  | (docs only)             |
-| **Total**       | **22 commits** | **~1,450 lines Go + docs** |
+| **Total**       | **23 commits** | **~1,550 lines Go + docs** |
 
 No new Go module dependencies (everything uses stdlib + existing deps).

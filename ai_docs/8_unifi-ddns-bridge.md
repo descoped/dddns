@@ -4,18 +4,94 @@
 
 A supplementary run mode for dddns on UniFi Dream devices (UDR, UDR7, UDM/UDM-Pro). Instead of cron polling, the UniFi OS built-in `inadyn` client — configured via the Network Controller "Dynamic DNS" UI as a `Custom` service — triggers local HTTP requests to a new `dddns serve` listener on WAN IP changes. The listener runs the same Route53 update path as `dddns update`.
 
-**Mode is exclusive.** A given install runs EITHER cron-driven `dddns update` OR event-driven `dddns serve`, never both. This eliminates cache races and keeps a single source of truth. Mode is chosen at install time and switched later with `dddns config set-mode {cron|serve}`.
+**Mode is exclusive.** A given install runs EITHER `dddns update` (cron) OR `dddns serve` (event-driven), never both. This eliminates cache races and keeps one source of truth. Mode is chosen at install time and switched later with `dddns config set-mode {cron|serve}`.
 
-**Config is shared.** Both modes read the same `config.yaml` or `config.secure`. A new optional `server:` block holds serve-mode parameters.
+**Config is shared.** Both modes read the same `config.yaml` / `config.secure`. A new optional `server:` block holds serve-mode parameters.
 
-## 2. Architecture
+**Security is non-negotiable.** The listener controls a DNS record for a production domain. The design assumes the shared Basic Auth credential *will* leak at some point (UniFi DB exfil, LAN malware, supply-chain compromise) and is layered so that leakage alone cannot hijack DNS.
+
+## 2. Threat Model
+
+**Asset:** control of the configured A record (e.g. `home.route-66.no`). An attacker who can successfully trigger a Route53 update controls where traffic to that hostname goes.
+
+**In scope:**
+- **LAN attackers** — compromised IoT, guest Wi-Fi client, malware on a trusted host. Can reach `127.0.0.1:53353` only by first compromising the router itself, but can reach `0.0.0.0` binds directly.
+- **Local processes on UniFi OS** — any process on the router (containers, UniFi services, a future compromise) can hit loopback.
+- **UniFi controller database** — stores the custom-DDNS password; leaked via backup export, controller RCE, or account compromise.
+- **Replay attackers** — Basic Auth is a bearer; captured once, replayable forever.
+
+**Out of scope (explicitly):**
+- Nation-state MITM on AWS public endpoints (`checkip.amazonaws.com`, `route53.amazonaws.com`).
+- Root compromise of the router itself — at that point the attacker owns `config.secure`, the device key, and the binary.
+
+**Constraint that shapes the design:** The UniFi UI gives `inadyn` three inputs (username, password, server URL) and speaks only dyndns v2 HTTP Basic Auth for custom providers. We cannot change the wire protocol to HMAC, mTLS, signed nonces, or OAuth. The credential on the wire will be a shared secret in a Basic Auth header. Any stronger scheme requires replacing the trigger mechanism, defeating the point of the design.
+
+**Therefore:** we accept the credential can be stolen and design layers that make *possession of the credential insufficient to cause harm*.
+
+## 3. Security Model (Layered Defenses)
+
+### L1 — Network reachability (reduce who can even attempt)
+
+- Bind defaults to `127.0.0.1:53353`. Loopback only. Reachable only from processes already on the router.
+- LAN reachability is explicit opt-in: `server.bind: "0.0.0.0:53353"` with a loud warning from `config set-mode serve`.
+- `RemoteAddr` CIDR allowlist is enforced in the handler as defense in depth. Empty `allowed_cidrs` → server refuses to start (fail-closed).
+- Port 53353 is unprivileged; no `CAP_NET_BIND_SERVICE` needed.
+
+### L2 — Credential strength (reduce trivial guessing / weak passwords)
+
+- **Generated, never chosen.** The installer creates a 256-bit secret via `crypto/rand` (`hex.EncodeToString` → 64 chars). No user-chosen passwords.
+- **Printed once.** The installer prints the secret to stdout exactly once for pasting into the UniFi UI. After that it lives only encrypted in `config.secure` and in the UniFi controller's own DB. Lose it → rotate, never recover.
+- **Constant-time compare** against the stored value (`subtle.ConstantTimeCompare`).
+- **At-rest encryption** via the existing device key (AES-256-GCM, same mechanism as `aws_credentials_vault`). An attacker who reads `config.secure` off a backup but is not on the originating device cannot decrypt it.
+- **Rotation** is a first-class operation: `dddns config rotate-secret`.
+
+### L3 — Auth-failure lockout (defeat online brute force)
+
+- Sliding window in memory: if ≥5 auth failures occur within 60 seconds, the server responds `badauth` without checking the password for the next 5 minutes.
+- Every auth failure is logged at WARN severity with `remote_addr` — legitimate inadyn never fails auth, so any failure is suspicious.
+- State is per-process (resets on restart), which is acceptable: an attacker forcing a restart has to race the supervisor's 5-second respawn and cannot evade more than one cycle.
+
+### L4 — Upstream blast radius (the biggest win)
+
+This is where a compromised secret stops mattering.
+
+**Independent IP verification.** The handler does NOT use the `myip` query parameter as an instruction. It calls `myip.GetPublicIP()` (same code path as `dddns update`) to discover the router's real current public IP and pushes *that* to Route53. The `myip` param is used only as:
+- A log entry (for detecting an attacker trying to push a chosen IP),
+- Nothing else.
+
+**Consequence:** an attacker with the shared secret can only cause the record to point to the router's actual WAN IP — which is what it already points to. Compromise becomes a nuisance (wasted Route53 API calls, throttled by L3), not a redirection.
+
+**Scoped AWS IAM policy** (see §7). The dddns binary's AWS credentials are limited to UPSERT on a single record name, single type. Even if both the shared secret AND the AWS keys are stolen, the blast radius is one A record.
+
+**Route53 TTL = 300s.** A successful hijack (assuming L4 fails entirely) clears globally in 5 minutes. Already the project default, documented here explicitly as a defensive property.
+
+### L5 — Detection & recovery
+
+- **Structured audit log** at `/var/log/dddns-audit.log`, JSONL, one line per request:
+  ```json
+  {"ts":"2026-04-17T12:34:56Z","remote":"127.0.0.1","hostname":"home.route-66.no","myip_claimed":"1.2.3.4","myip_verified":"1.2.3.4","auth":"ok","action":"nochg-cache","route53_change_id":""}
+  ```
+  Rotated at 10 MB (same policy as `dddns.log`).
+- **`myip_claimed` ≠ `myip_verified` is a strong signal** that either a misconfigured client or an attack is in flight. Audit log surfaces this immediately.
+- **Optional hook** `server.on_auth_failure: "<shell command>"` — fires the command on any auth failure. Lets the user wire up ntfy/Pushover/email without baking delivery into dddns.
+- **CloudTrail** on the hosted zone is recommended (docs); surfaces every `ChangeResourceRecordSets` call, independent of dddns.
+
+### L6 — Fail-closed defaults
+
+The server refuses to start if any of:
+- `server.bind` missing
+- `server.shared_secret` / `secret_vault` missing
+- `server.allowed_cidrs` empty
+- `cfg.Hostname` empty
+
+## 4. Architecture
 
 ```
 UniFi OS (UDR7)
    │
    │ WAN IP change (DHCP / PPPoE)
    ▼
-inadyn ──HTTP GET──► 0.0.0.0:53353/nic/update?hostname=…&myip=…
+inadyn ──HTTP GET──► 127.0.0.1:53353/nic/update?hostname=…&myip=…
                                      │
                                      ▼
                              dddns serve
@@ -23,6 +99,7 @@ inadyn ──HTTP GET──► 0.0.0.0:53353/nic/update?hostname=…&myip=…
                                ▼   ▼   ▼
                              cidr auth handler
                                          │
+                                         ├──► myip.GetPublicIP()  (verify, not trust)
                                          ▼
                                 internal/updater
                                          │
@@ -30,28 +107,23 @@ inadyn ──HTTP GET──► 0.0.0.0:53353/nic/update?hostname=…&myip=…
                                  internal/dns (Route53)
 ```
 
-**Binding.** `0.0.0.0:53353`. LAN-reachable so SSH-in-from-LAN debugging works without tunneling. Port 53353 is unprivileged and unlikely to collide with UniFi services. UniFi UI's "Server" field is a free-form URL template — any port is accepted there; inadyn uses whatever port is supplied.
-
-**Network filter.** The handler rejects any request whose `RemoteAddr` is not in the configured CIDR allowlist. Defaults: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`. WAN-sourced requests always fail this check. This is defense in depth alongside UniFi's default WAN-inbound firewall block.
-
-**Authentication.** `inadyn` sends `Authorization: Basic base64(user:pass)`. The username is ignored (UniFi UI mandates a value; semantics are caller-defined). The password is compared to the configured shared secret with `subtle.ConstantTimeCompare`.
-
-**Secret storage.** Follows existing convention. Plaintext in `config.yaml` (same as `aws_access_key`); device-encrypted in `config.secure` via the existing AES-256-GCM/device-key path.
-
-## 3. Request Flow
+## 5. Request Flow
 
 1. UniFi OS detects a WAN IP change.
 2. `inadyn` issues `GET /nic/update?hostname=%h&myip=%i` with `Authorization: Basic …`.
-3. Server checks `RemoteAddr` against allowed CIDRs → HTTP 403 on miss.
-4. Auth middleware verifies Basic Auth password against `cfg.Server.SharedSecret` → `badauth` on miss.
+3. CIDR middleware: `RemoteAddr` in `allowed_cidrs` → else HTTP 403.
+4. Auth middleware: lockout check, then constant-time password compare → else `badauth` + record failure.
 5. Handler validates:
    - Method is `GET` → else HTTP 405.
    - `hostname` equals `cfg.Hostname` → else `nohost`.
-   - `myip` parses as public IPv4 (rejects RFC1918, loopback, link-local, unspecified) → else `notfqdn`.
-6. Handler calls `updater.Update(ctx, cfg, myip, Options{})`.
-7. The `updater.Result.Action` is mapped to a dyndns response (§7).
+   - `myip` parses to a public IPv4 → else log anomaly (don't reject; we don't trust it anyway).
+6. Handler calls `myip.GetPublicIP()` → `verifiedIP`.
+7. If `verifiedIP` ≠ claimed `myip`: log as anomaly; continue using `verifiedIP`.
+8. Handler calls `updater.Update(ctx, cfg, Options{})` — updater internally fetches IP the same way, so this step is idempotent with step 6 at the cost of one extra HTTP call. *(Decision below: updater takes `Options{OverrideIP: verifiedIP}` to avoid the double fetch. See §9.)*
+9. Handler writes an audit log entry with all fields.
+10. Handler maps `updater.Result.Action` to a dyndns response (§10).
 
-## 4. Config Schema
+## 6. Config Schema
 
 ### `config.yaml` (plaintext)
 
@@ -60,19 +132,27 @@ aws_region: us-east-1
 aws_access_key: AKIA…
 aws_secret_key: …
 hosted_zone_id: Z…
-hostname: home.example.com
+hostname: home.route-66.no
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
 skip_proxy_check: false
 
 server:
-  bind: "0.0.0.0:53353"
-  shared_secret: "…"
+  bind: "127.0.0.1:53353"           # loopback only by default
+  shared_secret: "<64 hex chars>"    # plaintext here, vault in .secure
   allowed_cidrs:
     - "127.0.0.0/8"
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-    - "192.168.0.0/16"
+  audit_log: /var/log/dddns-audit.log
+  on_auth_failure: ""                # optional shell hook; empty = disabled
+```
+
+LAN-reachable opt-in example:
+```yaml
+server:
+  bind: "0.0.0.0:53353"
+  allowed_cidrs:
+    - "127.0.0.0/8"
+    - "192.168.1.0/24"    # explicit subnet, not the whole RFC1918 space
 ```
 
 ### `config.secure` (device-encrypted)
@@ -81,61 +161,98 @@ server:
 aws_region: us-east-1
 aws_credentials_vault: "<base64 enc ak:sk>"
 hosted_zone_id: Z…
-hostname: home.example.com
+hostname: home.route-66.no
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
 skip_proxy_check: false
 
 server:
-  bind: "0.0.0.0:53353"
+  bind: "127.0.0.1:53353"
   secret_vault: "<base64 enc secret>"
-  allowed_cidrs:
-    - "127.0.0.0/8"
-    - "10.0.0.0/8"
-    - "172.16.0.0/12"
-    - "192.168.0.0/16"
+  allowed_cidrs: ["127.0.0.0/8"]
+  audit_log: /var/log/dddns-audit.log
+  on_auth_failure: ""
 ```
 
-Presence of `server:` enables serve mode to be selectable; the actual active mode is set by `dddns config set-mode`.
+## 7. AWS IAM Policy (Mandatory Scoping)
 
-## 5. Package Layout
+The Route53 IAM user's policy MUST be scoped to the specific record and action. Document and deploy this as the only supported policy for dddns.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListZoneForLookup",
+      "Effect": "Allow",
+      "Action": "route53:ListResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX"
+    },
+    {
+      "Sid": "UpsertSingleARecord",
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["home.route-66.no"],
+          "route53:ChangeResourceRecordSetsRecordTypes": ["A"],
+          "route53:ChangeResourceRecordSetsActions": ["UPSERT"]
+        }
+      }
+    }
+  ]
+}
+```
+
+With this policy, stolen AWS credentials cannot: delete the record, change the TTL, change MX/NS/TXT/CNAME/AAAA, or touch any other record in the zone. They can only UPSERT an A record named exactly `home.route-66.no`. Combined with L4 IP verification, there is effectively nothing useful an attacker can do with them.
+
+This belongs in `docs/AWS_SETUP.md` as the canonical policy — not as an advanced suggestion.
+
+## 8. Package Layout
 
 ```
 cmd/
 ├── update.go                [MODIFY: delegate to internal/updater]
-├── serve.go                 [NEW: dddns serve + status/test subcommands]
-└── config.go                [MODIFY: interactive wizard handles server block + set-mode]
+├── serve.go                 [NEW: dddns serve + serve status/test]
+└── config.go                [MODIFY: interactive wizard, set-mode, rotate-secret]
 
 internal/
 ├── updater/
 │   └── updater.go           [NEW: DRY core update logic]
 ├── server/
-│   ├── server.go            [NEW: net.Listen, graceful shutdown]
-│   ├── handler.go           [NEW: dyndns protocol handler]
-│   ├── auth.go              [NEW: constant-time shared-secret check]
+│   ├── server.go            [NEW: net.Listen, graceful shutdown, fail-closed checks]
+│   ├── handler.go           [NEW: dyndns protocol handler, IP verification]
+│   ├── auth.go              [NEW: constant-time compare + lockout window]
 │   ├── cidr.go              [NEW: RemoteAddr allowlist]
-│   └── status.go            [NEW: serve-status.json read/write]
+│   ├── audit.go             [NEW: JSONL audit log writer + rotation]
+│   └── status.go            [NEW: serve-status.json for `serve status`]
 ├── config/
-│   ├── config.go            [MODIFY: add ServerConfig]
+│   ├── config.go            [MODIFY: ServerConfig struct + validation]
 │   └── secure_config.go     [MODIFY: encrypt/decrypt server.shared_secret]
-└── crypto/
-    └── device_crypto.go     [MODIFY: factor out EncryptString/DecryptString]
+├── crypto/
+│   └── device_crypto.go     [MODIFY: factor out EncryptString/DecryptString]
+├── bootscript/
+│   └── bootscript.go        [NEW: generate /data/on_boot.d/20-dddns.sh per mode]
+└── installer/
+    └── secret.go            [NEW: CSPRNG secret generation]
 ```
 
-Each file under `internal/server/` has one reason to change (SRP).
+SRP per file. No file has more than one reason to change.
 
-## 6. Prep Refactors
+## 9. Prep Refactors (behavior-preserving)
 
-### 6.1 `internal/updater` (DRY)
+### 9.1 `internal/updater`
 
-`cmd/update.go:runUpdate` currently inlines cache read, Route53 client creation, current-IP check, upsert, and cache write. Extract into a pure function used by both run modes:
+Extract update core from `cmd/update.go:runUpdate`. The updater internally discovers the public IP unless explicitly overridden:
 
 ```go
 package updater
 
 type Options struct {
-    Force  bool
-    DryRun bool
+    Force      bool
+    DryRun     bool
+    OverrideIP string  // empty = fetch via myip.GetPublicIP(); non-empty = use as-is (testing / serve-mode hand-off)
 }
 
 type Result struct {
@@ -145,16 +262,14 @@ type Result struct {
     Hostname string
 }
 
-func Update(ctx context.Context, cfg *config.Config, newIP string, opts Options) (*Result, error)
+func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, error)
 ```
 
-- `cmd/update.go` becomes IP detection + proxy check + `updater.Update` + human-readable print.
-- `internal/server/handler.go` calls `updater.Update` and maps `Result.Action` to a dyndns code. No proxy check (the router's WAN IP isn't proxied in the dddns sense).
-- Cache I/O lives only in `internal/updater`.
+- `cmd/update.go` passes `OverrideIP: customIP` if `--ip` is used; else empty.
+- `internal/server/handler.go` fetches `verifiedIP` itself (to build audit log), then passes `OverrideIP: verifiedIP` — avoids the double fetch.
+- Cache reads/writes live only in `internal/updater`.
 
-### 6.2 `crypto.EncryptString` / `DecryptString`
-
-Factor single-string primitives out of the existing `EncryptCredentials`, which becomes a one-line wrapper:
+### 9.2 `crypto.EncryptString` / `DecryptString`
 
 ```go
 func EncryptString(plaintext string) (string, error)
@@ -165,39 +280,37 @@ func EncryptCredentials(ak, sk string) (string, error) {
 }
 ```
 
-Same device key, same AES-256-GCM. The server secret uses `EncryptString` directly.
+Same device key, same AES-256-GCM. The server secret encrypts via `EncryptString` directly.
 
-## 7. Dyndns Response Mapping
+## 10. Dyndns Response Mapping
 
 | Condition                                             | Body          | HTTP |
 |-------------------------------------------------------|---------------|------|
 | `RemoteAddr` not in `allowed_cidrs`                   | (empty)       | 403  |
 | Method ≠ `GET`                                        | (empty)       | 405  |
-| Basic Auth missing or wrong password                  | `badauth\n`   | 200  |
+| Auth failure OR under lockout                         | `badauth\n`   | 200  |
 | `hostname` param missing                              | `notfqdn\n`   | 200  |
 | `hostname` ≠ `cfg.Hostname`                           | `nohost\n`    | 200  |
-| `myip` unparseable, private, loopback, or link-local  | `notfqdn\n`   | 200  |
 | `updater.Update` → `updated`                          | `good <ip>\n` | 200  |
 | `updater.Update` → `nochg-cache` or `nochg-dns`       | `nochg <ip>\n`| 200  |
 | Route53 error                                         | `dnserr\n`    | 200  |
 | Panic (recovered)                                     | `911\n`       | 200  |
 
-Always HTTP 200 for dyndns-encoded responses; semantics are in the body, per protocol. HTTP error codes are reserved for pre-protocol rejections (network origin, wrong method).
+The response carries the *verified* IP, never the client-claimed IP. Always HTTP 200 for dyndns-encoded responses.
 
-## 8. CLI Surface
+## 11. CLI Surface
 
 ```
-dddns serve                                  # start the listener (blocks)
-dddns serve status                           # print /data/.dddns/serve-status.json
-dddns serve test --hostname X --ip Y         # send a local test request
-dddns config set-mode {cron|serve}           # switch modes; rewrites boot script
+dddns serve                              # start the listener (blocks)
+dddns serve status                       # print serve-status.json
+dddns serve test --hostname X --ip Y     # send a local Basic-Auth'd test request
+dddns config set-mode {cron|serve}       # switch modes; rewrites boot script
+dddns config rotate-secret               # regenerate server.shared_secret; print once
 ```
 
-`serve status` reads the status file that the handler writes on each request: last request timestamp, last successful update, last error, request counts. No `/status` HTTP endpoint — the CLI is the interface.
+`serve test` reads the shared secret from config, crafts a Basic Auth `GET` to `127.0.0.1:<port>/nic/update`, and prints the response. This is the SSH-debug path — loopback-only is enough.
 
-`serve test` reads the shared secret from config, crafts a Basic Auth `GET` to `127.0.0.1:<port>/nic/update`, and prints the response. This is the SSH debugging path.
-
-## 9. Install & Mode Switching
+## 12. Install, Mode Switching, Rotation
 
 ### Install prompt
 
@@ -208,52 +321,181 @@ dddns update mode:
 Choose [1]:
 ```
 
-On `serve` selection, the installer generates a random shared secret (`openssl rand -hex 16`), writes the `server:` block, and prints the UniFi UI values to paste.
+On `serve`: installer generates a 256-bit secret, writes the `server:` block, prints UI values, and installs the serve-mode boot script.
 
-### Boot script
+### Boot script generation
 
-The installer writes ONE script at `/data/on_boot.d/20-dddns.sh`:
+`internal/bootscript` produces `/data/on_boot.d/20-dddns.sh` based on mode:
 
-**Cron mode:** installs `/etc/cron.d/dddns` with `*/30 * * * * root dddns update …`. No server started.
+- **cron**: writes `/etc/cron.d/dddns` with `*/30 * * * * root dddns update …`. No server.
+- **serve**: supervised loop (no cron entry):
+  ```sh
+  (
+    while true; do
+      /usr/local/bin/dddns serve >> /var/log/dddns-server.log 2>&1
+      sleep 5
+    done
+  ) &
+  ```
 
-**Serve mode:** launches a supervised loop, no cron entry:
-```sh
-(
-  while true; do
-    /usr/local/bin/dddns serve >> /var/log/dddns-server.log 2>&1
-    sleep 5
-  done
-) &
-```
+### Mode switch
 
-Separate log file (`dddns-server.log` vs `dddns.log`) so the two modes never share state.
+`dddns config set-mode {cron|serve}` validates the target mode (serve requires `cfg.Server` populated), regenerates the boot script, removes the artifact for the other mode (`/etc/cron.d/dddns` or the supervisor loop), runs the boot script once. Idempotent.
 
-### Switching modes post-install
+### Secret rotation
 
-`dddns config set-mode {cron|serve}` rewrites `/data/on_boot.d/20-dddns.sh` and runs it once. Idempotent. Switching to `serve` requires `cfg.Server` to be populated (error otherwise). Switching to `cron` leaves `cfg.Server` intact so the user can switch back without re-entering the secret.
+`dddns config rotate-secret`:
+1. Generates new 256-bit secret via `crypto/rand`.
+2. Re-encrypts into `config.secure`.
+3. Prints the new secret exactly once, framed clearly, with instructions to update the UniFi UI.
+4. Appends a rotation event to the audit log.
 
-### UniFi UI reference (serve mode)
+No restart of the server is required — it reads the config file at request time (or on reload signal). Open question: SIGHUP reload, or restart-on-config-change?  → **Decision:** restart on `set-mode`/`rotate-secret` via supervisor respawn. Simpler, and the 5-second gap is negligible for event-driven updates.
+
+## 13. UniFi UI Reference
 
 UniFi Network Controller → Settings → Internet → Dynamic DNS → Create:
 
 | Field     | Value                                                |
 |-----------|------------------------------------------------------|
 | Service   | `Custom`                                             |
-| Hostname  | must equal `cfg.Hostname` (e.g. `home.example.com`)  |
+| Hostname  | must equal `cfg.Hostname` (e.g. `home.route-66.no`) |
 | Username  | any non-empty string (handler ignores)               |
 | Password  | the shared secret printed by the installer          |
 | Server    | `127.0.0.1:53353/nic/update?hostname=%h&myip=%i`     |
 
-`inadyn` runs on-device, so the Server field targets loopback. The LAN bind is only for SSH/debug.
+`inadyn` runs on-device and targets loopback. LAN reachability is not needed for UniFi's trigger.
 
-## 10. Implementation Sequence
+## 14. Implementation Plan
 
-Each step is an independent commit; tests pass at every point.
+Ordered, each step an independent commit with passing tests.
 
-1. **Refactor** `internal/updater` — behavior-preserving extraction from `cmd/update.go`.
-2. **Refactor** `crypto.EncryptString` / `DecryptString` — factor from `EncryptCredentials`.
-3. **Schema** add `ServerConfig` + `secret_vault` field; no consumer yet.
-4. **Feature** `internal/server` package + `dddns serve` command.
-5. **Feature** `dddns serve status` and `dddns serve test` subcommands.
-6. **Feature** `dddns config set-mode` + boot-script generator.
-7. **Installer** `install-on-unifi-os.sh` mode prompt, secret generation, UI values output.
+### Phase A — Prep refactors (no behavior change)
+
+**A1. Extract `internal/updater`.**
+- Move update core out of `cmd/update.go`; new package `internal/updater`.
+- `Update(ctx, cfg, Options) (*Result, error)` with `OverrideIP` option.
+- `cmd/update.go` shrinks to: IP detect (if no override) → proxy check → `updater.Update` → print.
+- Tests: move existing `cmd/update_test.go` coverage into `internal/updater/updater_test.go`; add `OverrideIP` test.
+- **Accept:** `dddns update` behavior identical; all existing tests pass.
+
+**A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.**
+- Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner.
+- Tests: round-trip test for arbitrary strings; existing credential tests still pass.
+- **Accept:** no behavior change; secure config load/save bit-identical.
+
+### Phase B — Config schema (no consumer yet)
+
+**B1. Add `ServerConfig` struct.**
+- `internal/config/config.go`: new `ServerConfig` struct with `Bind`, `SharedSecret`, `AllowedCIDRs`, `AuditLog`, `OnAuthFailure`. Field added to `Config` as optional `*ServerConfig`.
+- Validation method on `ServerConfig`: CIDRs parseable, bind is `host:port`, secret non-empty.
+- Tests: YAML round-trip; validation errors for each missing field.
+- **Accept:** existing configs load without the block; new block loads correctly.
+
+**B2. Encrypt/decrypt `server.shared_secret` in secure config.**
+- `internal/config/secure_config.go`: new `secret_vault` field; encrypt via `crypto.EncryptString`, decrypt on load.
+- Tests: round-trip secret through `.secure`; device-key change → decryption fails.
+- **Accept:** `dddns secure enable` preserves the server block and encrypts the secret.
+
+### Phase C — Server core
+
+**C1. `internal/server/cidr.go` + unit tests.**
+- `IsAllowed(remoteAddr, cidrs) bool` with IPv4/IPv6 support.
+- Tests: loopback, RFC1918, public, malformed.
+
+**C2. `internal/server/auth.go` + unit tests.**
+- Constant-time password compare.
+- Lockout state: sliding window, 5 failures / 60 seconds → 5-minute block.
+- Tests: success, mismatch, lockout trigger, lockout expiry, thread-safety under concurrent requests.
+
+**C3. `internal/server/audit.go` + unit tests.**
+- JSONL writer; open-append, size-based rotation at 10 MB; atomic write.
+- Tests: concurrent writes serialize correctly, rotation triggers at threshold.
+
+**C4. `internal/server/handler.go` + unit tests.**
+- Parse query, validate method, hostname, (loose) myip sanity.
+- Call `myip.GetPublicIP()` → `verifiedIP`.
+- Call `updater.Update(ctx, cfg, Options{OverrideIP: verifiedIP})`.
+- Emit audit log entry; map `Result.Action` to dyndns body.
+- Tests: table-driven for every row of §10; mock `myip` and `updater`.
+
+**C5. `internal/server/server.go` + `cmd/serve.go`.**
+- `net.Listen` on `cfg.Server.Bind`; middleware chain: cidr → auth → handler.
+- Fail-closed config checks before `Listen`.
+- Graceful shutdown on SIGINT/SIGTERM.
+- `dddns serve` cobra command.
+- Tests: integration test with `httptest.NewServer` over the middleware chain.
+
+### Phase D — Operational commands
+
+**D1. `dddns serve status`.**
+- `internal/server/status.go`: reads `/data/.dddns/serve-status.json` (written by handler on each request).
+- Prints last-request-at, last-success-at, failure counts, lockout state.
+- Tests: status file round-trip.
+
+**D2. `dddns serve test`.**
+- Reads shared secret (decrypting `.secure` if needed), crafts Basic Auth `GET`, prints response body and HTTP status.
+- Tests: hits a `httptest.NewServer` running the real handler; verifies exit codes per outcome.
+
+**D3. `dddns config rotate-secret`.**
+- Generates 256-bit secret via `crypto/rand`.
+- Writes back to the currently-loaded config (secure or plain).
+- Prints once, with framed output and UI-update instructions.
+- Logs rotation to audit log.
+- Tests: round-trip, two rotations produce different secrets, audit entry written.
+
+**D4. `internal/bootscript` + `dddns config set-mode`.**
+- Pure function: `Generate(mode, paths) string` returns the correct boot script body.
+- `set-mode` validates target, writes `/data/on_boot.d/20-dddns.sh`, removes `/etc/cron.d/dddns` or serve supervisor as appropriate, runs the script once.
+- Tests: golden-file tests on generated scripts; validates that switching is idempotent.
+
+### Phase E — Installer integration
+
+**E1. `scripts/install-on-unifi-os.sh` mode prompt.**
+- Interactive prompt; `--mode {cron|serve}` flag for non-interactive.
+- On `serve`: generate secret (via `dddns config rotate-secret --init`), populate `config.yaml`, print UI values in a clearly-framed block.
+- Calls `dddns config set-mode` to write the boot script.
+- Idempotent upgrade path preserves existing mode and config.
+- Tests: manual on-device, since this is bash against live UniFi filesystem.
+
+### Phase F — Documentation
+
+**F1. `docs/AWS_SETUP.md` — scoped IAM.**
+- Replace existing IAM guidance with the §7 policy as the *only* supported option.
+- Step-by-step IAM user / policy creation with condition keys.
+- Explain the blast-radius reduction.
+
+**F2. `docs/UDM_GUIDE.md` — serve mode.**
+- New section covering serve-mode install, UI setup, rotation, log files, mode switching.
+- Update the "Monitoring" section to cover the audit log and distinguish it from the operational log.
+
+**F3. `docs/TROUBLESHOOTING.md` — serve-mode issues.**
+- `badauth` → check UniFi UI password against current secret
+- `nohost` → hostname mismatch
+- `dnserr` → AWS IAM / connectivity
+- `911` → panic, check `/var/log/dddns-server.log`
+- Lockout behavior and how to wait it out vs. restart.
+
+### Phase G — Future enhancements (out of scope for v1)
+
+These are deliberately deferred to keep the initial surface small and well-tested. Each is a self-contained follow-up.
+
+- **G1.** Multi-hostname support (depends on the v2 multi-target config work in `ai_docs/0_` and `ai_docs/1_`).
+- **G2.** IPv6 / AAAA record support (currently A-only).
+- **G3.** Non-root execution — add a `dddns` system user, adjust config file ownership, use `setcap` for any privileged operations. Requires installer rework.
+- **G4.** CloudTrail / SNS integration guide in docs (detect out-of-band Route53 changes).
+- **G5.** Pluggable notification backend for `on_auth_failure` (ntfy, Slack webhook, SMTP) as a small built-in alternative to shell hooks.
+
+### Estimated Scope
+
+| Phase | Commits | Net code added (approx) |
+|-------|---------|-------------------------|
+| A (refactor)    | 2  | ~0 (moved)              |
+| B (schema)      | 2  | ~150 lines              |
+| C (server core) | 5  | ~700 lines + tests      |
+| D (ops)         | 4  | ~300 lines              |
+| E (installer)   | 1  | ~80 bash lines          |
+| F (docs)        | 3  | (docs only)             |
+| **Total**       | **17 commits** | **~1,200 lines Go + docs** |
+
+No new Go module dependencies (everything uses stdlib + existing deps).

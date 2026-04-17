@@ -8,31 +8,25 @@ import (
 )
 
 func TestGetPublicIP(t *testing.T) {
-	// get ip
 	ip, err := myip.GetPublicIP()
 	if err != nil {
-		t.Errorf("Failed to get public ip: %s", err)
+		t.Fatalf("Failed to get public ip: %s", err)
 	}
-
-	// check if ip is public
-	isProxyIP, err := myip.IsProxyIP(&ip)
-	if err != nil {
-		t.Errorf("Failed to check if public ip is a proxy ip: %s", ip)
+	if ip == "" {
+		t.Error("Expected non-empty public IP")
 	}
-
-	fmt.Printf("Is proxy: %s => %t\n", ip, isProxyIP)
+	fmt.Printf("Public IP: %s\n", ip)
 }
 
 func TestIsProxyIP_InvalidIP(t *testing.T) {
 	invalidIP := "not-an-ip"
-	isProxy, err := myip.IsProxyIP(&invalidIP)
+	_, err := myip.IsProxyIP(&invalidIP)
 
-	// ip-api.com accepts any string, so we just check it returns false
-	if err != nil {
-		t.Errorf("Unexpected error for invalid IP: %v", err)
-	}
-	if isProxy {
-		t.Error("Invalid IP should not be detected as proxy")
+	// ip-api.com returns {"status":"fail","message":"invalid query"} for
+	// malformed inputs. That is now surfaced as an error instead of being
+	// silently collapsed to "not a proxy".
+	if err == nil {
+		t.Error("Expected error for invalid IP, got nil")
 	}
 }
 

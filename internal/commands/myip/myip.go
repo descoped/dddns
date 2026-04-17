@@ -14,6 +14,10 @@ var httpClient = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
+// ipAPIBaseURL is the base URL for ip-api.com proxy lookups.
+// Exposed as a package variable so tests can redirect it to an httptest server.
+var ipAPIBaseURL = "https://ip-api.com"
+
 // GetPublicIP retrieves the public IP for current network
 func GetPublicIP() (string, error) {
 	resp, err := httpClient.Get("https://checkip.amazonaws.com")
@@ -32,9 +36,9 @@ func GetPublicIP() (string, error) {
 
 // geoLocation represents the response from ip-api.com for proxy detection.
 type geoLocation struct {
-	//query  string `json:"query"`
-	//status string `json:"status"`
-	Proxy bool `json:"proxy"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Proxy   bool   `json:"proxy"`
 }
 
 // IsProxyIP checks whether public-ip actually is a proxy-public-ip, using geo location api
@@ -42,7 +46,7 @@ func IsProxyIP(ip *string) (bool, error) {
 	if ip == nil {
 		return false, fmt.Errorf("ip cannot be nil")
 	}
-	resp, err := httpClient.Get(fmt.Sprintf("https://ip-api.com/json/%s?fields=query,status,proxy", *ip))
+	resp, err := httpClient.Get(fmt.Sprintf("%s/json/%s?fields=status,message,proxy", ipAPIBaseURL, *ip))
 	if err != nil {
 		return false, fmt.Errorf("http check if-public-ip-is-proxy error: %w", err)
 	}
@@ -56,6 +60,14 @@ func IsProxyIP(ip *string) (bool, error) {
 	location, err := toJSON(body)
 	if err != nil {
 		return false, err
+	}
+
+	if location.Status != "success" {
+		msg := location.Message
+		if msg == "" {
+			msg = location.Status
+		}
+		return false, fmt.Errorf("ip-api.com request failed: %s", msg)
 	}
 
 	return location.Proxy, nil

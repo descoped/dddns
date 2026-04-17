@@ -394,10 +394,15 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Commit `99184e9`.
 **Findings:** No remaining work. Both bug sites collapsed cleanly to `filepath.Dir`. Existing tests passed unchanged, confirming no behavior difference on valid Unix paths; the three new tests cover the previously-broken shapes (nested, bare filename, non-`config.yaml` name).
 
-**0.2. Fix `IsProxyIP` silent API-failure bug.**
-- `internal/commands/myip/myip.go` — add `Status string` to `geoLocation`; return an error when `status != "success"` rather than unmarshalling into `Proxy: false` and silently reporting "not a proxy". Today, an ip-api.com outage or throttle masquerades as a clean "direct connection".
-- Tests: mock responses for `success+proxy=true`, `success+proxy=false`, `status=fail` (must error), malformed JSON.
-- **Accept:** API failures surface as errors.
+**0.2. Fix `IsProxyIP` silent API-failure bug.** ✅ Completed
+- `internal/commands/myip/myip.go` — added `Status` and `Message` fields to `geoLocation`; `IsProxyIP` now returns a descriptive error when `status != "success"` instead of unmarshalling into `Proxy: false` and silently reporting "not a proxy".
+- Added package var `ipAPIBaseURL` so tests can redirect requests to an `httptest` server; made the URL `?fields=status,message,proxy` so error messages can be surfaced to the caller.
+- Tests added (`internal/commands/myip/myip_mock_test.go`, internal package): `TestIsProxyIP_Success_NotProxy`, `TestIsProxyIP_Success_IsProxy`, `TestIsProxyIP_StatusFail`, `TestIsProxyIP_MalformedJSON`, `TestIsProxyIP_EmptyStatus`.
+- Updated existing `TestIsProxyIP_InvalidIP` to assert the new error-surfacing behavior. Reshaped `TestGetPublicIP` to exercise only `GetPublicIP` (the IsProxyIP call it previously made was testing the old broken behavior — see finding).
+
+**Status:** ✅ Complete. Full suite green (82 tests across 10 packages).
+**Findings — significant:** `ip-api.com` free tier does **not** support HTTPS. Every request we've ever made over HTTPS has returned `{"status":"fail","message":"SSL unavailable for this endpoint, order a key at https://members.ip-api.com/"}` and been silently collapsed to "not a proxy" by the old code. In effect, the proxy check has been a no-op in production for the entire lifetime of dddns. After this fix, the check now correctly errors out — which in cron mode means every `dddns update` run will log `Warning: proxy check failed: ip-api.com request failed: SSL unavailable...`. Users can suppress this by setting `skip_proxy_check: true` in config.
+**Follow-up work (not in this step):** switch ip-api.com calls to HTTP (free tier requires it), or accelerate Phase G6 (retire the proxy check entirely). The latter is the right long-term move — HTTP leaks the lookup and the check provides marginal value anyway.
 
 **0.3. Fail-fast on malformed config.**
 - `cmd/root.go:initConfig` — on `ReadInConfig` errors other than `ConfigFileNotFoundError`, print the error and `os.Exit(1)`. Today it prints to stderr and silently continues, producing a confusing downstream `aws_access_key is required` error for what is actually a YAML syntax problem.

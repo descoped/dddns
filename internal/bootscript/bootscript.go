@@ -2,6 +2,11 @@
 // devices. A single script file at /data/on_boot.d/20-dddns.sh selects
 // between the two run modes (cron, serve); `dddns config set-mode`
 // writes the output of Generate into that path.
+//
+// Serve mode uses a systemd unit (standard on UniFi OS 2.x+) for
+// supervision; cron mode installs an /etc/cron.d entry. Both artefacts
+// live outside /data (they're on the wiped-by-firmware root FS), so
+// the boot script re-installs them on every boot.
 package bootscript
 
 import "fmt"
@@ -14,7 +19,6 @@ type Params struct {
 	ConfigDir      string // e.g. /data/.dddns
 	CronEntryPath  string // e.g. /etc/cron.d/dddns
 	UpdateLogPath  string // e.g. /var/log/dddns.log
-	ServerLogPath  string // e.g. /var/log/dddns-server.log
 	UpdateInterval string // crontab schedule; e.g. "*/30 * * * *"
 }
 
@@ -26,7 +30,6 @@ func DefaultUnifiParams(mode string) Params {
 		ConfigDir:      "/data/.dddns",
 		CronEntryPath:  "/etc/cron.d/dddns",
 		UpdateLogPath:  "/var/log/dddns.log",
-		ServerLogPath:  "/var/log/dddns-server.log",
 		UpdateInterval: "*/30 * * * *",
 	}
 }
@@ -53,6 +56,7 @@ set -eu
 BINARY=%q
 CONFIG_DIR=%q
 CRON_PATH=%q
+SYSTEMD_UNIT=/etc/systemd/system/dddns.service
 
 # Keep /usr/local/bin/dddns as a symlink to the /data-resident binary
 # so it survives /usr rewrites across firmware upgrades.
@@ -70,8 +74,16 @@ fi
 const cronTail = `
 # --- cron mode ---
 
-# Stop any stray serve loop (guards switching from serve to cron).
-pkill -f "dddns serve" >/dev/null 2>&1 || true
+# Stop + disable the serve systemd unit if present (guards switching
+# from serve to cron). The unit file at /etc/systemd/system/ is the
+# source of truth — removing it from /data/ alone would be undone on
+# the next boot.
+if [ -f "$SYSTEMD_UNIT" ]; then
+    systemctl stop dddns.service >/dev/null 2>&1 || true
+    systemctl disable dddns.service >/dev/null 2>&1 || true
+    rm -f "$SYSTEMD_UNIT"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 
 # Install / refresh the cron entry.
 cat > "$CRON_PATH" <<'CRON'
@@ -92,18 +104,37 @@ if [ -f "$CRON_PATH" ]; then
     /etc/init.d/cron restart >/dev/null 2>&1 || true
 fi
 
-# Stop any prior serve loop so re-running this script does not double-start.
-pkill -f "dddns serve" >/dev/null 2>&1 || true
+# Install the systemd unit. /etc/systemd/system/ is wiped on firmware
+# upgrade, which is also when this boot script re-runs — so the source
+# of truth for the unit is this heredoc, not the installed file.
+cat > "$SYSTEMD_UNIT" <<'UNIT'
+[Unit]
+Description=dddns serve-mode DNS updater
+Documentation=https://github.com/descoped/dddns
+After=network-online.target
+Wants=network-online.target
 
-# Start the supervised listener. The subshell+while loop restarts dddns
-# serve after a crash with a 5-second backoff; no external supervisor
-# needed on UniFi OS.
-(
-    while true; do
-        /usr/local/bin/dddns serve >> %s 2>&1
-        sleep 5
-    done
-) &
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dddns serve
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dddns
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/data/.dddns /var/log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable dddns.service >/dev/null 2>&1 || true
+systemctl restart dddns.service
 `
 
 func renderCron(p Params) string {
@@ -112,6 +143,5 @@ func renderCron(p Params) string {
 }
 
 func renderServe(p Params) string {
-	return fmt.Sprintf(commonHeader, p.BinaryPath, p.ConfigDir, p.CronEntryPath) +
-		fmt.Sprintf(serveTail, p.ServerLogPath)
+	return fmt.Sprintf(commonHeader, p.BinaryPath, p.ConfigDir, p.CronEntryPath) + serveTail
 }

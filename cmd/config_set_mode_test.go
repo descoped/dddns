@@ -71,7 +71,7 @@ func TestSetMode_Serve_RequiresServerBlock(t *testing.T) {
 	}
 }
 
-func TestSetMode_Serve_WritesSupervisedLoop(t *testing.T) {
+func TestSetMode_Serve_WritesSystemdUnit(t *testing.T) {
 	cacheFile := filepath.Join(t.TempDir(), "cache.txt")
 	_ = writeInitialConfig(t, baseRotateConfig(cacheFile))
 
@@ -90,7 +90,14 @@ func TestSetMode_Serve_WritesSupervisedLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, needle := range []string{"--- serve mode ---", "while true; do", "dddns serve >>", "sleep 5"} {
+	for _, needle := range []string{
+		"--- serve mode ---",
+		"ExecStart=/usr/local/bin/dddns serve",
+		"Restart=always",
+		"systemctl daemon-reload",
+		"systemctl enable dddns.service",
+		"systemctl restart dddns.service",
+	} {
 		if !strings.Contains(string(body), needle) {
 			t.Errorf("script missing %q", needle)
 		}

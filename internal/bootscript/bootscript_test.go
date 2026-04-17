@@ -14,13 +14,20 @@ func TestGenerate_Cron(t *testing.T) {
 		"#!/bin/sh",
 		"BINARY=\"/data/dddns/dddns\"",
 		"--- cron mode ---",
-		"pkill -f \"dddns serve\"", // stop serve loop before installing cron
+		// Switching-from-serve guard.
+		"systemctl stop dddns.service",
+		"systemctl disable dddns.service",
+		`rm -f "$SYSTEMD_UNIT"`,
+		// Cron install.
 		"*/30 * * * * root /usr/local/bin/dddns update --quiet",
 		"/var/log/dddns.log",
 		"/etc/init.d/cron restart",
 	})
 	mustNotContain(t, out, []string{
-		"dddns serve >> /var/log/dddns-server.log",
+		// Cron mode must not start the daemon.
+		"systemctl enable dddns.service",
+		"systemctl restart dddns.service",
+		"ExecStart=/usr/local/bin/dddns serve",
 	})
 }
 
@@ -33,18 +40,28 @@ func TestGenerate_Serve(t *testing.T) {
 		"#!/bin/sh",
 		"BINARY=\"/data/dddns/dddns\"",
 		"--- serve mode ---",
-		"rm -f \"$CRON_PATH\"",
-		"pkill -f \"dddns serve\"",
-		"while true; do",
-		"/usr/local/bin/dddns serve >> /var/log/dddns-server.log",
-		"sleep 5",
+		// Switching-from-cron guard.
+		`rm -f "$CRON_PATH"`,
+		// systemd unit install.
+		`cat > "$SYSTEMD_UNIT" <<'UNIT'`,
+		"[Service]",
+		"ExecStart=/usr/local/bin/dddns serve",
+		"Restart=always",
+		"RestartSec=5",
+		"NoNewPrivileges=true",
+		"ProtectSystem=strict",
+		"ReadWritePaths=/data/.dddns /var/log",
+		"systemctl daemon-reload",
+		"systemctl enable dddns.service",
+		"systemctl restart dddns.service",
 	})
-	// The common header references CRON_PATH so removing a stale cron
-	// entry can work; what must NOT be present in serve mode is the
-	// cron installation (the `cat > "$CRON_PATH"` heredoc).
+	// The cron entry content and the while-loop shell supervisor must
+	// not leak into serve mode.
 	mustNotContain(t, out, []string{
 		"update --quiet",
 		`cat > "$CRON_PATH"`,
+		"while true; do",
+		`pkill -f "dddns serve"`,
 	})
 }
 
@@ -69,12 +86,11 @@ func TestGenerate_Idempotent(t *testing.T) {
 
 func TestGenerate_CustomPaths(t *testing.T) {
 	p := Params{
-		Mode:           "serve",
+		Mode:           "cron",
 		BinaryPath:     "/opt/dddns/bin/dddns",
 		ConfigDir:      "/opt/dddns/etc",
 		CronEntryPath:  "/opt/dddns/etc/cron",
 		UpdateLogPath:  "/opt/dddns/log/update.log",
-		ServerLogPath:  "/opt/dddns/log/server.log",
 		UpdateInterval: "*/15 * * * *",
 	}
 	out, err := Generate(p)
@@ -84,7 +100,9 @@ func TestGenerate_CustomPaths(t *testing.T) {
 	mustContain(t, out, []string{
 		"/opt/dddns/bin/dddns",
 		"/opt/dddns/etc",
-		"/opt/dddns/log/server.log",
+		"/opt/dddns/etc/cron",
+		"/opt/dddns/log/update.log",
+		"*/15 * * * *",
 	})
 }
 

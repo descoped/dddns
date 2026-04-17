@@ -300,9 +300,17 @@ print_unifi_ui_values() {
 
 uninstall() {
     log_warning "Uninstalling dddns..."
+    # Stop serve-mode supervision if active.
+    if [ -f "/etc/systemd/system/dddns.service" ]; then
+        systemctl stop dddns.service >/dev/null 2>&1 || true
+        systemctl disable dddns.service >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/dddns.service"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    # Stop cron-mode updates if active.
     rm -f "${CRON_FILE}"
     /etc/init.d/cron restart >/dev/null 2>&1 || true
-    pkill -f "dddns serve" >/dev/null 2>&1 || true
+    # Remove files.
     rm -f "${BOOT_SCRIPT}"
     rm -f "/usr/local/bin/${BINARY_NAME}"
     rm -rf "${INSTALL_DIR}"

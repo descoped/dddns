@@ -142,7 +142,7 @@ Serve mode turns the router's built-in dynamic DNS client (`inadyn`) into dddns'
 The installer:
 1. Generates a 256-bit shared secret and writes it to `config.yaml` (or `config.secure` if secure mode is already enabled).
 2. Creates the `server:` block with loopback-only bind (`127.0.0.1:53353`) and a `127.0.0.0/8` CIDR allowlist.
-3. Writes the on_boot.d script that starts a supervised `dddns serve` loop.
+3. Writes the on_boot.d script that installs a **systemd unit** (`dddns.service`) under `/etc/systemd/system/` and starts it. systemd supervises the daemon (`Restart=always`, `RestartSec=5`) and logs stdout/stderr to the journal.
 4. Prints a framed block with the UniFi UI values to paste.
 
 Copy the printed secret immediately — it's not shown again. To rotate later, run `dddns config rotate-secret` (see [Rotating the Shared Secret](#rotating-the-shared-secret) below).
@@ -198,16 +198,20 @@ Generates a fresh 256-bit secret, writes it back to config (re-encrypting if `.s
 
 ### Log Files
 
-| File                           | What's in it                                           |
-|--------------------------------|--------------------------------------------------------|
-| `/var/log/dddns-server.log`    | stdout/stderr from the supervised `dddns serve` loop — startup, shutdown, unexpected errors |
-| `/var/log/dddns-audit.log`     | JSONL, one line per request (ts, remote, hostname, myip_claimed, myip_verified, auth, action, route53_change_id, error) |
+| Source                           | What's in it                                           |
+|----------------------------------|--------------------------------------------------------|
+| `journalctl -u dddns`            | Daemon lifecycle (startup, shutdown, crashes, restarts). Replaces the old `/var/log/dddns-server.log`. |
+| `/var/log/dddns-audit.log`       | JSONL, one line per request (ts, remote, hostname, myip_claimed, myip_verified, auth, action, route53_change_id, error) |
 | `/data/.dddns/serve-status.json` | Last-request summary (overwritten; `dddns serve status` reads this) |
 
-Follow both logs during a test:
+Follow both the journal and the audit log during a test:
 
 ```bash
-tail -f /var/log/dddns-server.log /var/log/dddns-audit.log
+# Lifecycle
+journalctl -u dddns -f
+
+# Per-request trail
+tail -f /var/log/dddns-audit.log
 ```
 
 The audit log rotates itself at 10 MB to `.old` (one keep). A `myip_claimed` value that differs from `myip_verified` is a strong anomaly signal — the handler always uses the verified (local interface) IP for the Route53 upsert, so the difference is captured for review but never acted on.
@@ -227,7 +231,7 @@ The command rewrites `/data/on_boot.d/20-dddns.sh` for the target mode. It does 
 sudo /data/on_boot.d/20-dddns.sh
 ```
 
-The generated script is idempotent: switching to `cron` removes any stale serve loop (`pkill -f "dddns serve"`) and installs the cron entry; switching to `serve` removes `/etc/cron.d/dddns` and starts the supervised loop. Re-running it repeatedly converges on the target state.
+The generated script is idempotent. Switching to `cron`: `systemctl stop && disable dddns.service`, removes the unit file, `daemon-reload`, then installs `/etc/cron.d/dddns`. Switching to `serve`: removes `/etc/cron.d/dddns`, writes `/etc/systemd/system/dddns.service`, `daemon-reload`, `enable --now`. Re-running either converges on the target state.
 
 Switching to `serve` requires `cfg.Server` to be populated. If the block isn't there, run `dddns config rotate-secret --init` first.
 
@@ -315,16 +319,16 @@ export BIND_INTERFACE=eth8  # Your WAN interface
 
 ## Monitoring
 
-### Log Files at a Glance
+### Log Sources at a Glance
 
-| File                             | Mode  | Purpose                                             |
+| Source                           | Mode  | Purpose                                             |
 |----------------------------------|-------|-----------------------------------------------------|
 | `/var/log/dddns.log`             | cron  | `dddns update` stdout/stderr on each cron tick     |
 | `/var/log/dddns-boot.log`        | both  | One line per boot-script execution                 |
-| `/var/log/dddns-server.log`      | serve | `dddns serve` lifecycle (startup, crashes, restarts) |
+| `journalctl -u dddns`            | serve | `dddns serve` lifecycle via systemd-journal        |
 | `/var/log/dddns-audit.log`       | serve | JSONL trail of every request the listener handled  |
 
-The two serve-mode logs answer different questions. The *server* log tells you whether the daemon is alive; the *audit* log tells you what the daemon did for each caller.
+The two serve-mode sources answer different questions. The *journal* tells you whether the daemon is alive; the *audit* log tells you what the daemon did for each caller.
 
 ### View Logs
 
@@ -339,8 +343,9 @@ grep "$(date +%Y-%m-%d)" /var/log/dddns.log
 Serve mode:
 
 ```bash
-# Operational log — daemon lifecycle
-tail -f /var/log/dddns-server.log
+# Daemon lifecycle (journald)
+journalctl -u dddns -f
+journalctl -u dddns --since "1 hour ago"
 
 # Audit log — per-request structured trail (JSONL)
 tail -f /var/log/dddns-audit.log
@@ -363,8 +368,11 @@ ps aux | grep cron
 ### Check the Listener (serve mode)
 
 ```bash
-# Is the daemon running?
-pgrep -laf "dddns serve"
+# Is the service active?
+systemctl status dddns
+
+# When was it last started?
+systemctl show dddns --property=ActiveEnterTimestamp
 
 # What's the last request it handled?
 dddns serve status

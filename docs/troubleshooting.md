@@ -29,10 +29,11 @@ dddns update --dry-run          # exercise the full update flow
 tail -50 /var/log/dddns.log     # what did the last cron run say?
 
 # Serve mode
-pgrep -laf "dddns serve"        # is the daemon running?
+systemctl status dddns          # is the systemd service active?
 dddns serve status              # when did it last handle a request?
 dddns serve test                # can we reach it from this shell?
 tail -n 20 /var/log/dddns-audit.log | jq -c '{ts,auth,action,error}'
+journalctl -u dddns -n 50       # recent daemon lifecycle events
 ```
 
 ## Installation Issues
@@ -338,8 +339,8 @@ If you're in serve mode, there is no cron entry — `/etc/cron.d/dddns` should b
 Start here when anything in serve mode looks wrong:
 
 ```bash
-# Is the daemon running?
-pgrep -laf "dddns serve"
+# Is the systemd service active?
+systemctl status dddns
 
 # When did it last handle a request?
 dddns serve status
@@ -347,11 +348,12 @@ dddns serve status
 # Can we reach it from the router?
 dddns serve test
 
-# Tail both log files in parallel
-tail -f /var/log/dddns-server.log /var/log/dddns-audit.log
+# Daemon lifecycle + per-request audit in parallel
+journalctl -u dddns -f &
+tail -f /var/log/dddns-audit.log
 ```
 
-If `pgrep` returns nothing, the supervised loop is not running. Re-apply the boot script:
+If `systemctl status dddns` reports `inactive` or `failed`, re-apply the boot script (which reinstalls and starts the unit):
 
 ```bash
 sudo /data/on_boot.d/20-dddns.sh
@@ -391,8 +393,7 @@ grep '"auth":"locked"' /var/log/dddns-audit.log | tail -5
 **Fix**: wait out the 5-minute window, or restart the daemon to reset the in-memory lockout state:
 
 ```bash
-pkill -f "dddns serve"
-# Supervised loop restarts after 5 seconds automatically.
+systemctl restart dddns
 ```
 
 ### `nohost`
@@ -452,13 +453,13 @@ Common causes and next steps:
 
 ```bash
 # Grab the daemon log for the panic stack
-tail -n 200 /var/log/dddns-server.log
+journalctl -u dddns -n 200 --no-pager
 
 # Capture the audit entry for the offending request
 grep '"action":"panic"' /var/log/dddns-audit.log | tail -1
 
 # Restart to clear state
-pkill -f "dddns serve"
+systemctl restart dddns
 ```
 
 ### HTTP 403 (not in allowed_cidrs)
@@ -485,7 +486,7 @@ Keep the default loopback-only bind if the only caller is UniFi's on-device `ina
 
 **Symptom**: Can't reach `127.0.0.1:53353` even from the router itself.
 
-**Cause**: the daemon is not running. Supervisor may have crashed; cron mode might be active instead; or the port is something other than the default.
+**Cause**: the daemon is not running. systemd unit may have failed to start; cron mode might be active instead; or the port is something other than the default.
 
 **Fix**:
 
@@ -496,7 +497,10 @@ grep "^# --- " /data/on_boot.d/20-dddns.sh
 # Confirm the bind port
 grep '^\s*bind:' /data/.dddns/config.yaml
 
-# Restart
+# Inspect service status
+systemctl status dddns
+
+# Restart (runs the boot script, which reinstalls the unit if needed)
 sudo /data/on_boot.d/20-dddns.sh
 ```
 

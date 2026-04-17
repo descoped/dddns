@@ -10,6 +10,16 @@ Make WAN IP change detection near-instant on platforms other than UniFi OS.
 - Changing the default cron behavior on any platform — polling remains the fallback everywhere.
 - Adding a background daemon to the dddns binary. Platform-specific hooks invoke `dddns update`; no always-on process except `dddns serve` (which is UniFi-only).
 
+## Verification needed before promoting any recipe
+
+The hook scripts below are documented from each platform's hook contract, not copy-paste snippets validated on a running system. Before promoting any of them to an official install path or linking them from user-facing docs:
+
+- **Confirm hook directory location** on the target distro. `dhcpcd` hook paths differ between Debian (`/lib/dhcpcd/dhcpcd-hooks/`) and RPM-family distros; Raspberry Pi OS and Debian agree.
+- **Confirm WAN interface name.** `eth0` / `wlan0` / `enp0s25` / `ppp0` vary by hardware and by whether the distro uses classic naming or `systemd-networkd` predictable names. The scripts assume classic `eth0`/`wlan0` — update per system.
+- **Confirm the environment variables** available in the hook context. `$reason`, `$interface` (dhcpcd), `$PPP_IFACE` (ppp), and NetworkManager's `$1`/`$2` positional args all depend on the trigger source and the distro's hook-runner version.
+
+These are recipes the user adapts, not turnkey installers. dddns-side tooling to auto-install any of them is explicitly out of scope (see §"What dddns does not do").
+
 ## Context
 
 Polling (`*/30 * * * *`) has up to 30 minutes of latency between IP change and DNS update. Most home ISPs don't change IPs often enough for this to matter, but for users with frequent changes (PPPoE disconnects, mobile/4G/5G uplinks) event-driven detection cuts latency to seconds.

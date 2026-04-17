@@ -11,6 +11,17 @@ Support DNS providers beyond AWS Route53 via a thin provider interface over HTTP
 - Credential encryption enhancements (KDF, per-install salt, passphrase) — see `4_security-roadmap.md`.
 - UniFi serve-mode internals — already shipped, see `5_unifi-ddns-bridge.md`.
 
+## Verification needed before implementing
+
+Claims in this doc that carry estimates or inheritance from earlier PoC sketches rather than measurements against current `main`. Treat them as credible-estimate, not measured-fact, until validated by a spike.
+
+- **SigV4 ≈ 100 lines** (§Route53 port) — inherited from the earlier PoC writeup, not measured. Confirm the real line count before using it as a sizing input.
+- **~8 MB vs. ~25 MB binary** (§Why HTTP-only) — estimated. Step 1 of the implementation sequence (§Implementation sequence) should measure the current `dddns_Linux_arm64` size on `main`, then measure again after the SDK removal. Confirm the <10 MB target holds.
+- **IAM compatibility with hand-signed SigV4** (§Route53 port) — the scoped policy in `docs/aws-setup.md` was validated with SDK-signed calls. Condition keys *should* match hand-signed requests since they key off request shape, not the signer — but this has not been smoke-tested. Run one real UPSERT via a spike against the policy before merging the port.
+- **`targets:` schema composability** (§Multi-target) — new shape, not prototyped against the current `viper`-backed config loader. Build a parse-and-validate prototype (no update flow) first to verify it composes cleanly with `server:` and `ip_source`, and to confirm the single-provider → multi-target detection heuristic behaves as described.
+
+These are spike targets, not blockers — the design direction holds. The first implementation PR should record the measured values in this doc.
+
 ## Decisions
 
 1. **HTTP-only, no vendor SDKs.** Every provider uses `net/http` + stdlib. AWS Route53 is ported to hand-signed SigV4 requests; `aws-sdk-go-v2` is removed from `go.mod`.

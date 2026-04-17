@@ -8,6 +8,11 @@ import (
 	"testing"
 )
 
+// testPublicIP is the single source of truth for the placeholder public
+// IPv4 used across wanip test fixtures. RFC 5737 TEST-NET-3 — guaranteed
+// not to collide with a real deployment. Change here to change everywhere.
+const testPublicIP = "203.0.113.42"
+
 // ipNet constructs a *net.IPNet from either "1.2.3.4" or "1.2.3.4/24".
 func ipNet(s string) net.Addr {
 	if ip, n, err := net.ParseCIDR(s); err == nil {
@@ -46,26 +51,26 @@ func mockRouteFile(t *testing.T, content string) {
 
 func TestFromInterface_ReturnsPublicIPv4(t *testing.T) {
 	mockInterfaces(t, map[string][]net.Addr{
-		"eth8": {ipNet("81.191.174.72/24")},
+		"eth8": {ipNet(testPublicIP + "/24")},
 	})
 	ip, err := FromInterface("eth8")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ip.String() != "81.191.174.72" {
+	if ip.String() != testPublicIP {
 		t.Errorf("got %s", ip)
 	}
 }
 
 func TestFromInterface_SkipsPrivateFindsPublic(t *testing.T) {
 	mockInterfaces(t, map[string][]net.Addr{
-		"eth0": {ipNet("192.168.1.1/24"), ipNet("81.191.174.72/24")},
+		"eth0": {ipNet("192.168.1.1/24"), ipNet(testPublicIP + "/24")},
 	})
 	ip, err := FromInterface("eth0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ip.String() != "81.191.174.72" {
+	if ip.String() != testPublicIP {
 		t.Errorf("got %s", ip)
 	}
 }
@@ -99,13 +104,13 @@ func TestFromInterface_NoAddresses(t *testing.T) {
 
 func TestFromInterface_PPPoE(t *testing.T) {
 	mockInterfaces(t, map[string][]net.Addr{
-		"ppp0": {ipNet("81.191.174.72/32")},
+		"ppp0": {ipNet(testPublicIP + "/32")},
 	})
 	ip, err := FromInterface("ppp0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ip.String() != "81.191.174.72" {
+	if ip.String() != testPublicIP {
 		t.Errorf("got %s", ip)
 	}
 }
@@ -119,7 +124,7 @@ func TestFromInterface_UnknownInterface(t *testing.T) {
 
 func TestFromInterface_AutoDetect(t *testing.T) {
 	mockInterfaces(t, map[string][]net.Addr{
-		"eth8": {ipNet("81.191.174.72/24")},
+		"eth8": {ipNet(testPublicIP + "/24")},
 	})
 	mockRouteFile(t, `Iface	Destination	Gateway	Flags	RefCnt	Use	Metric	Mask	MTU	Window	IRTT
 eth8	00000000	0101A8C0	0003	0	0	100	00000000	0	0	0
@@ -129,7 +134,7 @@ eth0	0000A8C0	00000000	0001	0	0	100	00FFFFFF	0	0	0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ip.String() != "81.191.174.72" {
+	if ip.String() != testPublicIP {
 		t.Errorf("got %s", ip)
 	}
 }
@@ -155,7 +160,7 @@ func TestIsPublicIPv4(t *testing.T) {
 		ip   string
 		want bool
 	}{
-		{"81.191.174.72", true},
+		{testPublicIP, true},
 		{"8.8.8.8", true},
 		{"1.1.1.1", true},
 		{"127.0.0.1", false},

@@ -16,7 +16,7 @@ A supplementary run mode for dddns on UniFi Dream devices (UDR, UDR7, UDM/UDM-Pr
 
 ## 2. Threat Model
 
-**Asset:** control of the configured A record (e.g. `home.route-66.no`). An attacker who can successfully trigger a Route53 update controls where traffic to that hostname goes.
+**Asset:** control of the configured A record (e.g. `home.example.com`). An attacker who can successfully trigger a Route53 update controls where traffic to that hostname goes.
 
 **In scope:**
 - **LAN attackers** — compromised IoT, guest Wi-Fi client, malware on a trusted host. Can reach `127.0.0.1:53353` only by first compromising the router itself, but can reach `0.0.0.0` binds directly.
@@ -73,7 +73,7 @@ This is where a compromised secret stops mattering.
 
 - **Structured audit log** at `/var/log/dddns-audit.log`, JSONL, one line per request:
   ```json
-  {"ts":"2026-04-17T12:34:56Z","remote":"127.0.0.1","hostname":"home.route-66.no","myip_claimed":"1.2.3.4","myip_verified":"1.2.3.4","auth":"ok","action":"nochg-cache","route53_change_id":""}
+  {"ts":"2026-04-17T12:34:56Z","remote":"127.0.0.1","hostname":"home.example.com","myip_claimed":"1.2.3.4","myip_verified":"1.2.3.4","auth":"ok","action":"nochg-cache","route53_change_id":""}
   ```
   Rotated at 10 MB (same policy as `dddns.log`).
 - **`myip_claimed` ≠ `myip_verified` is a strong signal** that either a misconfigured client or an attack is in flight. Audit log surfaces this immediately.
@@ -136,7 +136,7 @@ aws_region: us-east-1
 aws_access_key: AKIA…
 aws_secret_key: …
 hosted_zone_id: Z…
-hostname: home.route-66.no
+hostname: home.example.com
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
 ip_source: auto                      # auto | local | remote (see §3 L4)
@@ -173,7 +173,7 @@ server:
 aws_region: us-east-1
 aws_credentials_vault: "<base64 enc ak:sk>"
 hosted_zone_id: Z…
-hostname: home.route-66.no
+hostname: home.example.com
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
 
@@ -207,7 +207,7 @@ The Route53 IAM user's policy MUST be scoped to the specific record and action. 
       "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX",
       "Condition": {
         "ForAllValues:StringEquals": {
-          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["home.route-66.no"],
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["home.example.com"],
           "route53:ChangeResourceRecordSetsRecordTypes": ["A"],
           "route53:ChangeResourceRecordSetsActions": ["UPSERT"]
         }
@@ -217,7 +217,7 @@ The Route53 IAM user's policy MUST be scoped to the specific record and action. 
 }
 ```
 
-With this policy, stolen AWS credentials cannot: delete the record, change the TTL, change MX/NS/TXT/CNAME/AAAA, or touch any other record in the zone. They can only UPSERT an A record named exactly `home.route-66.no`. Combined with L4 IP verification, there is effectively nothing useful an attacker can do with them.
+With this policy, stolen AWS credentials cannot: delete the record, change the TTL, change MX/NS/TXT/CNAME/AAAA, or touch any other record in the zone. They can only UPSERT an A record named exactly `home.example.com`. Combined with L4 IP verification, there is effectively nothing useful an attacker can do with them.
 
 This belongs in `docs/aws-setup.md` as the canonical policy — not as an advanced suggestion.
 
@@ -365,7 +365,7 @@ UniFi Network Controller → Settings → Internet → Dynamic DNS → Create:
 | Field     | Value                                                |
 |-----------|------------------------------------------------------|
 | Service   | `Custom`                                             |
-| Hostname  | must equal `cfg.Hostname` (e.g. `home.route-66.no`) |
+| Hostname  | must equal `cfg.Hostname` (e.g. `home.example.com`) |
 | Username  | any non-empty string (handler ignores)               |
 | Password  | the shared secret printed by the installer          |
 | Server    | `127.0.0.1:53353/nic/update?hostname=%h&myip=%i`     |

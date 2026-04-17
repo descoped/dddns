@@ -88,7 +88,7 @@ func TestServer_Integration_EndToEnd(t *testing.T) {
 	if !ok {
 		t.Fatalf("handler type = %T, want *Handler", handler)
 	}
-	h.wanIP = func(string) (net.IP, error) { return net.ParseIP("81.191.174.72"), nil }
+	h.wanIP = func(string) (net.IP, error) { return net.ParseIP(testPublicIP), nil }
 	h.updateIP = func(_ context.Context, _ *config.Config, opts updater.Options) (*updater.Result, error) {
 		return &updater.Result{Action: "updated", NewIP: opts.OverrideIP, Hostname: cfg.Hostname}, nil
 	}
@@ -97,7 +97,7 @@ func TestServer_Integration_EndToEnd(t *testing.T) {
 	ts := httptest.NewServer(srv.http.Handler)
 	defer ts.Close()
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/nic/update?hostname="+testHostname+"&myip=81.191.174.72", nil)
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/nic/update?hostname="+testHostname+"&myip="+testPublicIP, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestServer_Integration_EndToEnd(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if got := strings.TrimSpace(string(body)); got != "good 81.191.174.72" {
+	if got := strings.TrimSpace(string(body)); got != "good " + testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 }

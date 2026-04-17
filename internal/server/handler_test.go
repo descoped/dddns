@@ -17,8 +17,12 @@ import (
 	"github.com/descoped/dddns/internal/updater"
 )
 
+// Test fixtures. Single source of truth for placeholders used across every
+// server-package test. testPublicIP is RFC 5737 TEST-NET-3; testHostname is
+// RFC 2606 reserved. Change here to change everywhere.
 const (
-	testHostname = "home.route-66.no"
+	testPublicIP = "203.0.113.42"
+	testHostname = "home.example.com"
 	testSecretV  = "correct-horse-battery-staple"
 )
 
@@ -46,7 +50,7 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{
 		auditPath:  filepath.Join(tmp, "audit.log"),
 		statusPath: filepath.Join(tmp, "status.json"),
-		wanIPReturn: net.ParseIP("81.191.174.72"),
+		wanIPReturn: net.ParseIP(testPublicIP),
 	}
 	cfg := &config.Config{
 		Hostname: testHostname,
@@ -162,26 +166,26 @@ func TestHandler_WrongHostname(t *testing.T) {
 
 func TestHandler_UpdatedGood(t *testing.T) {
 	f := newFixture(t)
-	f.updaterResult = &updater.Result{Action: "updated", NewIP: "81.191.174.72", Hostname: testHostname}
-	req := newReq(t, map[string]string{"hostname": testHostname, "myip": "81.191.174.72"}, testSecretV)
+	f.updaterResult = &updater.Result{Action: "updated", NewIP: testPublicIP, Hostname: testHostname}
+	req := newReq(t, map[string]string{"hostname": testHostname, "myip": testPublicIP}, testSecretV)
 	w := f.do(req, "127.0.0.1:54321")
-	if got := strings.TrimSpace(w.Body.String()); got != "good 81.191.174.72" {
+	if got := strings.TrimSpace(w.Body.String()); got != "good " + testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 	if !f.updaterCalled {
 		t.Error("updater should have been called")
 	}
-	if f.updaterOpts.OverrideIP != "81.191.174.72" {
+	if f.updaterOpts.OverrideIP != testPublicIP {
 		t.Errorf("OverrideIP = %q, want local WAN IP", f.updaterOpts.OverrideIP)
 	}
 }
 
 func TestHandler_NoChange(t *testing.T) {
 	f := newFixture(t)
-	f.updaterResult = &updater.Result{Action: "nochg-cache", NewIP: "81.191.174.72"}
+	f.updaterResult = &updater.Result{Action: "nochg-cache", NewIP: testPublicIP}
 	req := newReq(t, map[string]string{"hostname": testHostname}, testSecretV)
 	w := f.do(req, "127.0.0.1:54321")
-	if got := strings.TrimSpace(w.Body.String()); got != "nochg 81.191.174.72" {
+	if got := strings.TrimSpace(w.Body.String()); got != "nochg " + testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 }
@@ -228,16 +232,16 @@ func TestHandler_LockoutResponds_Badauth(t *testing.T) {
 // pushes the local IP and records the claim for the audit trail.
 func TestHandler_MyipAnomalyLoggedButLocalIPUsed(t *testing.T) {
 	f := newFixture(t)
-	f.updaterResult = &updater.Result{Action: "updated", NewIP: "81.191.174.72"}
+	f.updaterResult = &updater.Result{Action: "updated", NewIP: testPublicIP}
 	req := newReq(t, map[string]string{"hostname": testHostname, "myip": "9.9.9.9"}, testSecretV)
 	w := f.do(req, "127.0.0.1:54321")
 
 	// Response advertises the real IP, not the claim.
-	if !strings.Contains(w.Body.String(), "81.191.174.72") {
+	if !strings.Contains(w.Body.String(), testPublicIP) {
 		t.Errorf("body should contain local IP, got %q", w.Body.String())
 	}
 	// Updater called with local IP, ignoring the claim.
-	if f.updaterOpts.OverrideIP != "81.191.174.72" {
+	if f.updaterOpts.OverrideIP != testPublicIP {
 		t.Errorf("OverrideIP = %q, want local IP", f.updaterOpts.OverrideIP)
 	}
 	// Audit entry records both claimed and verified.
@@ -249,7 +253,7 @@ func TestHandler_MyipAnomalyLoggedButLocalIPUsed(t *testing.T) {
 	if err := json.Unmarshal(raw[:len(raw)-1], &entry); err != nil {
 		t.Fatal(err)
 	}
-	if entry.MyIPClaimed != "9.9.9.9" || entry.MyIPVerified != "81.191.174.72" {
+	if entry.MyIPClaimed != "9.9.9.9" || entry.MyIPVerified != testPublicIP {
 		t.Errorf("audit mismatch: claimed=%q verified=%q", entry.MyIPClaimed, entry.MyIPVerified)
 	}
 }
@@ -260,7 +264,7 @@ func TestHandler_WritesStatus(t *testing.T) {
 	f := newFixture(t)
 	fixed := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
 	f.handler.now = func() time.Time { return fixed }
-	f.updaterResult = &updater.Result{Action: "updated", NewIP: "81.191.174.72"}
+	f.updaterResult = &updater.Result{Action: "updated", NewIP: testPublicIP}
 
 	req := newReq(t, map[string]string{"hostname": testHostname}, testSecretV)
 	f.do(req, "127.0.0.1:54321")

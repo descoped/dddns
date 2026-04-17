@@ -11,6 +11,10 @@ import (
 	"github.com/descoped/dddns/internal/config"
 )
 
+// testPublicIP is the single source of truth for the placeholder public
+// IPv4 used across updater test fixtures. RFC 5737 TEST-NET-3.
+const testPublicIP = "203.0.113.42"
+
 // --- cache helpers (moved from cmd/update_test.go) ---
 
 func TestReadCachedIP(t *testing.T) {
@@ -314,7 +318,7 @@ func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
 			if iface != "" {
 				t.Errorf("expected empty iface for auto-detect, got %q", iface)
 			}
-			return "81.191.174.72", nil
+			return testPublicIP, nil
 		},
 		nil,
 		"udm")
@@ -323,7 +327,7 @@ func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ip != "81.191.174.72" {
+	if ip != testPublicIP {
 		t.Errorf("got %s", ip)
 	}
 }

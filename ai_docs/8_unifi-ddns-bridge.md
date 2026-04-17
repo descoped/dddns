@@ -464,10 +464,14 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (130 tests across 12 packages).
 **Findings:** Clean drop-in. `net.SplitHostPort` handles `[v6]:port` correctly, so no IPv6 special-casing was needed for the port split.
 
-**C2. `internal/server/auth.go` + unit tests.**
-- Constant-time password compare.
-- Lockout state: sliding window, 5 failures / 60 seconds → 5-minute block.
-- Tests: success, mismatch, lockout trigger, lockout expiry, thread-safety under concurrent requests.
+**C2. `internal/server/auth.go` + unit tests.** ✅ Completed
+- New `Authenticator` type wrapping a shared secret + sliding-window lockout state under a `sync.Mutex`. `Check(password)` returns an `AuthResult` enum (`AuthOK`, `AuthBadCredentials`, `AuthLockedOut`) so the handler can map each outcome to a distinct dyndns response without inspecting error strings.
+- Lockout constants exported: `MaxFailuresPerWindow=5`, `FailureWindow=60s`, `LockoutDuration=5m`. Password comparison uses `crypto/subtle.ConstantTimeCompare`. A successful auth clears the recent-failures tally so legitimate callers aren't penalised for historical typos.
+- `now` is an injectable `func() time.Time` so tests can advance virtual time without sleeping.
+- 8 tests cover: success, bad credentials, empty password, lockout trip after threshold, failures outside the sliding window not counting, lockout expiry, success clearing the tally, and a 2,000-call concurrent exerciser validated by `go test -race`.
+
+**Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (138 tests across 12 packages).
+**Findings:** No surprises. The `fakeClock.advance` pattern keeps lockout tests deterministic and sub-second fast.
 
 **C3. `internal/server/audit.go` + unit tests.**
 - JSONL writer; open-append, size-based rotation at 10 MB; atomic write.

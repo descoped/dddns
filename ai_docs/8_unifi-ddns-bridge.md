@@ -511,10 +511,14 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase D — Operational commands
 
-**D1. `dddns serve status` + `internal/server/status.go` (reader).**
-- Add `Read()` helper to `status.go` (writer created in C5).
-- Prints last-request-at, last-success-at, failure counts, lockout state from the status file.
-- Tests: status file round-trip (write via the C5 helper, read via the subcommand).
+**D1. `dddns serve status` + `internal/server/status.go` (reader).** ✅ Completed
+- Added `server.ReadStatus(path)` — reads the file the C5 `StatusWriter` produces and returns a `StatusSnapshot`. Missing file and malformed JSON each return a descriptive error for the subcommand to surface.
+- Exported `server.StatusPath(cfg)` and `server.AuditPath(cfg)` so `cmd/` callers don't duplicate the path logic. Renamed the previously-unexported helpers.
+- New `dddns serve status` subcommand prints: status file path, LastRequestAt (RFC3339), LastRemoteAddr, LastAuthOutcome, LastAction, LastError (elided when empty). On a missing file the output includes a plain-English hint ("is `dddns serve` running?") so first-time users aren't puzzled.
+- 3 new tests: `TestStatusWriter_ReadRoundTrip`, `TestReadStatus_MissingFile`, `TestReadStatus_Malformed`. The pre-existing `TestStatusWriter_Atomic` was flaky under `-race` because its writer goroutine outlived the test body — fixed by joining on a done channel before returning.
+
+**Status:** ✅ Complete. `go test -race ./...` clean. Full suite green (182 tests across 13 packages). `dddns serve status` surfaces in `--help` and produces the expected error-with-hint when the status file is absent.
+**Findings:** Discovered a latent goroutine-lifetime bug in the C5 concurrent-atomicity test that only manifested under the race detector (a half-finished `os.CreateTemp` prevented `t.TempDir()` cleanup). The fix is a trivial `<-done` join; worth remembering as a pattern for any future test with a background-goroutine writer.
 
 **D2. `dddns serve test`.**
 - Reads shared secret (decrypting `.secure` if needed), crafts Basic Auth `GET`, prints response body and HTTP status.

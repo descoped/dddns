@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/descoped/dddns/internal/config"
 	"github.com/descoped/dddns/internal/server"
@@ -24,8 +25,19 @@ mutually exclusive — pick one at install time via
 	RunE: runServe,
 }
 
+var serveStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Print the last-request summary from the serve-mode status file",
+	Long: `Print a human-readable summary of the last HTTP request the
+serve-mode listener handled: when it arrived, where from, the auth
+outcome, the resulting action, and any error. Reads
+<data-dir>/serve-status.json written by the server on every request.`,
+	RunE: runServeStatus,
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
+	serveCmd.AddCommand(serveStatusCmd)
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -43,4 +55,34 @@ func runServe(_ *cobra.Command, _ []string) error {
 	defer stop()
 
 	return srv.Run(ctx)
+}
+
+func runServeStatus(cmd *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	path := server.StatusPath(cfg)
+	snap, err := server.ReadStatus(path)
+	if err != nil {
+		return fmt.Errorf("%w\n(is `dddns serve` running? no status is recorded until the server handles its first request)", err)
+	}
+
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Status file:    %s\n", path)
+	fmt.Fprintf(out, "Last request:   %s\n", snap.LastRequestAt.Format(time.RFC3339))
+	if snap.LastRemoteAddr != "" {
+		fmt.Fprintf(out, "Remote:         %s\n", snap.LastRemoteAddr)
+	}
+	if snap.LastAuthOutcome != "" {
+		fmt.Fprintf(out, "Auth outcome:   %s\n", snap.LastAuthOutcome)
+	}
+	if snap.LastAction != "" {
+		fmt.Fprintf(out, "Action:         %s\n", snap.LastAction)
+	}
+	if snap.LastError != "" {
+		fmt.Fprintf(out, "Error:          %s\n", snap.LastError)
+	}
+	return nil
 }

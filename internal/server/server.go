@@ -34,8 +34,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	auth := NewAuthenticator(cfg.Server.SharedSecret)
-	audit := NewAuditLog(auditPath(cfg))
-	status := NewStatusWriter(statusPath(cfg))
+	audit := NewAuditLog(AuditPath(cfg))
+	status := NewStatusWriter(StatusPath(cfg))
 	handler := NewHandler(cfg, auth, audit, status)
 
 	mux := http.NewServeMux()
@@ -83,17 +83,18 @@ func (s *Server) Handler() http.Handler {
 	return s.http.Handler
 }
 
-// auditPath returns the audit-log path — user-configured or derived
-// from the data directory.
-func auditPath(cfg *config.Config) string {
+// AuditPath returns the audit-log path — user-configured or derived
+// from the data directory. Exported so cmd/ callers (e.g.
+// `dddns serve status`) don't need to duplicate the path logic.
+func AuditPath(cfg *config.Config) string {
 	if cfg.Server != nil && cfg.Server.AuditLog != "" {
 		return cfg.Server.AuditLog
 	}
 	return filepath.Join(filepath.Dir(cfg.IPCacheFile), "serve-audit.log")
 }
 
-// statusPath returns the serve-status.json path — always in the same
+// StatusPath returns the serve-status.json path — always in the same
 // directory as the IP cache.
-func statusPath(cfg *config.Config) string {
+func StatusPath(cfg *config.Config) string {
 	return filepath.Join(filepath.Dir(cfg.IPCacheFile), "serve-status.json")
 }

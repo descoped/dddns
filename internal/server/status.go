@@ -33,6 +33,22 @@ func NewStatusWriter(path string) *StatusWriter {
 	return &StatusWriter{path: path}
 }
 
+// ReadStatus loads the latest StatusSnapshot from path. An absent file
+// or malformed JSON is returned as an error — callers typically print
+// the error verbatim (e.g. "status file not found — the server has not
+// recorded any request yet").
+func ReadStatus(path string) (StatusSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return StatusSnapshot{}, fmt.Errorf("read status: %w", err)
+	}
+	var snap StatusSnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return StatusSnapshot{}, fmt.Errorf("parse status: %w", err)
+	}
+	return snap, nil
+}
+
 // Write serializes snap as pretty-printed JSON and replaces the target
 // file atomically.
 func (s *StatusWriter) Write(snap StatusSnapshot) error {

@@ -284,16 +284,68 @@ func TestHandler_WritesStatus(t *testing.T) {
 	}
 }
 
+// TestStatusWriter_ReadRoundTrip verifies that Write followed by
+// ReadStatus returns the same snapshot.
+func TestStatusWriter_ReadRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "status.json")
+	w := NewStatusWriter(path)
+
+	in := StatusSnapshot{
+		LastRequestAt:   time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC),
+		LastRemoteAddr:  "127.0.0.1:54321",
+		LastAuthOutcome: "ok",
+		LastAction:      "updated",
+	}
+	if err := w.Write(in); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadStatus(path)
+	if err != nil {
+		t.Fatalf("ReadStatus failed: %v", err)
+	}
+	if !got.LastRequestAt.Equal(in.LastRequestAt) {
+		t.Errorf("LastRequestAt mismatch: got %v want %v", got.LastRequestAt, in.LastRequestAt)
+	}
+	if got.LastRemoteAddr != in.LastRemoteAddr {
+		t.Errorf("LastRemoteAddr mismatch")
+	}
+	if got.LastAction != in.LastAction {
+		t.Errorf("LastAction mismatch")
+	}
+}
+
+func TestReadStatus_MissingFile(t *testing.T) {
+	if _, err := ReadStatus(filepath.Join(t.TempDir(), "nope.json")); err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestReadStatus_Malformed(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "status.json")
+	if err := os.WriteFile(path, []byte("{not valid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadStatus(path); err == nil {
+		t.Error("expected error for malformed JSON")
+	}
+}
+
 // TestStatusWriter_Atomic verifies a concurrent read never sees a
-// partially-written file.
+// partially-written file. The writer goroutine is joined before the
+// test returns so t.TempDir's cleanup doesn't race an in-flight
+// os.CreateTemp.
 func TestStatusWriter_Atomic(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "status.json")
 	w := NewStatusWriter(path)
 
 	const n = 200
-	errCh := make(chan error, n)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for i := 0; i < n; i++ {
 			_ = w.Write(StatusSnapshot{
 				LastRequestAt: time.Now(),
@@ -301,22 +353,17 @@ func TestStatusWriter_Atomic(t *testing.T) {
 			})
 		}
 	}()
-	// Concurrent readers — should always parse.
+
+	// Concurrent readers — every parse must succeed.
 	for i := 0; i < n/2; i++ {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			continue // file might not exist yet on first iteration
-		}
-		if len(raw) == 0 {
+		if err != nil || len(raw) == 0 {
 			continue
 		}
 		var snap StatusSnapshot
 		if err := json.Unmarshal(raw, &snap); err != nil {
-			errCh <- err
+			t.Errorf("reader parsed invalid JSON at iter %d: %v\n%s", i, err, raw)
 		}
 	}
-	close(errCh)
-	for err := range errCh {
-		t.Errorf("reader parsed invalid JSON: %v", err)
-	}
+	<-done // block until the writer finishes so TempDir cleanup is safe
 }

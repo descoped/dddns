@@ -69,42 +69,81 @@ Access type: ✓ Programmatic access
 Click: Next: Permissions
 ```
 
-### Step 3: Create Custom Policy
+### Step 3: Create the Scoped Policy
+
+The policy below is the one dddns is designed to run under. It is deliberately narrower than the AWS-managed `AmazonRoute53FullAccess` or a simple zone-wide permission — it uses Route53 condition keys to restrict the IAM user to a **single record name, single record type, single action** (`UPSERT`). Nothing else is reachable with these credentials.
 
 1. Click **Create policy** → **JSON** tab
-2. Replace the content with this minimal policy:
+2. Paste the following, then replace the two placeholders:
+   - `ZXXXXXXXXXXXXX` → your Hosted Zone ID
+   - `home.example.com` → the exact A record name dddns will manage
 
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AllowRoute53Updates",
+      "Sid": "ListZoneForLookup",
       "Effect": "Allow",
-      "Action": [
-        "route53:ChangeResourceRecordSets",
-        "route53:GetHostedZone",
-        "route53:ListResourceRecordSets"
-      ],
-      "Resource": "arn:aws:route53:::hostedzone/Z1234567890ABC"
+      "Action": "route53:ListResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX"
     },
     {
-      "Sid": "AllowGetChange",
+      "Sid": "UpsertSingleARecord",
       "Effect": "Allow",
-      "Action": [
-        "route53:GetChange"
-      ],
-      "Resource": "arn:aws:route53:::change/*"
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["home.example.com"],
+          "route53:ChangeResourceRecordSetsRecordTypes": ["A"],
+          "route53:ChangeResourceRecordSetsActions": ["UPSERT"]
+        }
+      }
     }
   ]
 }
 ```
 
-3. **IMPORTANT**: Replace `Z1234567890ABC` with your actual Hosted Zone ID
-4. Click **Next: Tags** → **Next: Review**
-5. Name: `dddns-route53-access`
-6. Description: `Minimal permissions for dddns to update DNS records`
-7. Click **Create policy**
+3. Click **Next: Tags** → **Next: Review**
+4. Name: `dddns-route53-upsert`
+5. Description: `UPSERT single A record for dddns — condition-key scoped`
+6. Click **Create policy**
+
+#### Why this shape?
+
+With this policy the IAM credentials **cannot**:
+
+- delete any record (no `DELETE` action)
+- create or modify any other record (name or type is rejected by the condition)
+- change the TTL on a record the policy doesn't already allow
+- touch `NS`, `MX`, `TXT`, `CNAME`, `AAAA`, or `SOA` records anywhere in the zone
+- reach any other hosted zone (the `Resource` is one ARN)
+
+Combined with dddns's own "local WAN IP is authoritative" defense (the serve-mode handler ignores the client-supplied `myip` and reads the real interface), the practical blast radius of a full credential leak is: **an attacker can cause an A record to point to the router's real current IP, which is where it already points**. That's the design target.
+
+#### Multi-record setups
+
+If you run dddns for two hostnames (say `home.example.com` and `router.example.com`), list both in the condition:
+
+```json
+"route53:ChangeResourceRecordSetsNormalizedRecordNames": [
+  "home.example.com",
+  "router.example.com"
+]
+```
+
+If you actually want broader permissions for some operational reason, the less-scoped form is the zone-wide policy in older guides:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "route53:ChangeResourceRecordSets",
+  "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX"
+}
+```
+
+It works but loses the blast-radius guarantees above — if the credentials leak, the attacker owns every record in the zone. Only go this way with eyes open.
 
 ### Step 4: Attach Policy and Create User
 
@@ -186,8 +225,9 @@ aws route53 list-resource-record-sets \
 - Create dedicated IAM users for each service
 
 ### 2. Principle of Least Privilege
-- Only grant permissions for specific hosted zone
-- Don't use `Resource: "*"` in policies
+- Use the scoped policy above — it restricts by record name, type, and action, not just by hosted zone.
+- Don't use `Resource: "*"` in policies.
+- Don't attach `AmazonRoute53FullAccess` to dddns credentials — the managed policy can modify NS/SOA records and delete entire zones.
 
 ### 3. Credential Management
 - Rotate access keys every 90 days
@@ -210,7 +250,10 @@ aws route53 list-resource-record-sets \
 ```
 Error: AccessDeniedException: User is not authorized to access this resource
 ```
-**Solution**: Check IAM policy has correct Hosted Zone ID
+**Solutions**:
+1. Confirm the Hosted Zone ID in the policy matches the one in your config.
+2. With the scoped policy, the record name in the condition block must match exactly. `home.example.com` in the policy ≠ `HOME.example.com` in the config ≠ `home.example.com.` (trailing dot). Route53 normalises to lowercase and no trailing dot — align the policy to that shape.
+3. Only `UPSERT` is allowed — if dddns ever tries `DELETE` or `CREATE`, the condition rejects it. Deletion is not a supported dddns operation.
 
 ### "InvalidChangeBatch" Error
 ```

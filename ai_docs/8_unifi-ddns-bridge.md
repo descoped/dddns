@@ -564,10 +564,15 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase F — Documentation
 
-**F1. `docs/aws-setup.md` — scoped IAM.**
-- Replace existing IAM guidance with the §7 policy as the *only* supported option.
-- Step-by-step IAM user / policy creation with condition keys.
-- Explain the blast-radius reduction.
+**F1. `docs/aws-setup.md` — scoped IAM.** ✅ Completed
+- Replaced the "Create Custom Policy" JSON with the scoped version using `route53:ChangeResourceRecordSetsNormalizedRecordNames`, `…RecordTypes`, and `…Actions` condition keys — single record, type `A`, action `UPSERT` only.
+- Added a "Why this shape?" subsection listing what the credentials cannot do (no delete, no other records, no NS/SOA, no other zone). Tied back to the L4 blast-radius reasoning in the security model (local WAN IP overrides the client-supplied `myip`, so even a fully compromised credential pair can only push the real current IP).
+- Multi-record section shows how to extend the condition array for several hostnames; an explicit "zone-wide fallback" callout documents the less-scoped policy for operators who knowingly need it.
+- Security Best Practices §2 updated to recommend the scoped policy specifically and warn against `AmazonRoute53FullAccess`. Troubleshooting §"AccessDenied" now calls out the record-name-must-match-exactly and UPSERT-only failure modes that come with the condition block.
+- File renamed as part of the `docs/` lowercase-kebab-case renaming pass (previous commit `75c7d65`).
+
+**Status:** ✅ Complete. No code changes; docs only.
+**Findings:** The existing policy already scoped `Resource` to a specific hosted zone — the upgrade adds record-name, type, and action restrictions on top. Worth a prominent "Why this shape?" explainer because `Condition` blocks are invisible in the IAM UI unless users click into the JSON.
 
 **F2. `docs/udm-guide.md` — serve mode.**
 - New section covering serve-mode install, UI setup, rotation, log files, mode switching.

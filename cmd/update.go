@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -191,7 +192,7 @@ func readCachedIP(path string) string {
 // writeCachedIP writes the current IP to cache file with timestamp
 func writeCachedIP(path string, ip string) error {
 	// Ensure directory exists
-	dir := path[:strings.LastIndex(path, "/")]
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, constants.CacheDirPerm); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/descoped/dddns/internal/constants"
@@ -110,7 +111,7 @@ skip_proxy_check: false                   # Skip proxy/VPN detection
 `
 
 	// Create directory if needed
-	dir := path[:len(path)-len("/config.yaml")]
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, constants.ConfigDirPerm); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}

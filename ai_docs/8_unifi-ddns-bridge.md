@@ -386,11 +386,11 @@ Ordered, each step an independent commit with passing tests.
 
 These are bugs discovered during design analysis. They pre-date this work, are independent of the feature, and belong in their own commits so they can be reviewed on their own merits. Landing them before Phase A means the refactors operate on clean code rather than propagating known defects.
 
-**0.1. Fix path manipulation bugs.**
+**0.1. Fix path manipulation bugs.** `[DONE]`
 - `cmd/update.go:writeCachedIP` — replace `path[:strings.LastIndex(path, "/")]` with `filepath.Dir(path)`. Current code panics on paths without `/` (returns `-1`) and breaks on Windows.
 - `internal/config/config.go:CreateDefault` — replace `path[:len(path)-len("/config.yaml")]` with `filepath.Dir(path)`. Current code assumes the exact filename `config.yaml`; breaks with `--config foo.yaml` or on Windows.
-- Tests: table-driven cases — no separator, trailing slash, Windows backslash.
-- **Accept:** unchanged on current Unix paths; no panic on edge cases.
+- Tests added: `TestWriteCachedIP_NestedPath`, `TestWriteCachedIP_RelativePath` (cmd); `TestCreateDefaultConfig_NonStandardFilename` (internal/config). Full suite still green (77 tests across 10 packages).
+- Findings: no remaining work.
 
 **0.2. Fix `IsProxyIP` silent API-failure bug.**
 - `internal/commands/myip/myip.go` — add `Status string` to `geoLocation`; return an error when `status != "success"` rather than unmarshalling into `Proxy: false` and silently reporting "not a proxy". Today, an ip-api.com outage or throttle masquerades as a clean "direct connection".

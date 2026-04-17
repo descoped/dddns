@@ -62,3 +62,38 @@ func TestWriteCachedIP(t *testing.T) {
 		t.Errorf("Expected permissions 0600, got %04o", mode)
 	}
 }
+
+// TestWriteCachedIP_NestedPath verifies directory creation works for multi-level paths.
+func TestWriteCachedIP_NestedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheFile := filepath.Join(tmpDir, "nested", "deeper", "cache.txt")
+
+	if err := writeCachedIP(cacheFile, "1.2.3.4"); err != nil {
+		t.Fatalf("writeCachedIP failed on nested path: %v", err)
+	}
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Errorf("cache file not created at %s: %v", cacheFile, err)
+	}
+}
+
+// TestWriteCachedIP_RelativePath verifies a path with no separator succeeds.
+// Previously, strings.LastIndex(path, "/") returned -1, making the slice
+// path[:-1] panic at runtime.
+func TestWriteCachedIP_RelativePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := writeCachedIP("cache.txt", "1.2.3.4"); err != nil {
+		t.Fatalf("writeCachedIP failed on bare filename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "cache.txt")); err != nil {
+		t.Errorf("cache file not created: %v", err)
+	}
+}

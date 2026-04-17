@@ -195,6 +195,23 @@ func TestCreateDefaultConfig_InvalidPath(t *testing.T) {
 	}
 }
 
+// TestCreateDefaultConfig_NonStandardFilename verifies directory creation
+// when the target filename is not exactly "config.yaml". The prior
+// implementation stripped a hardcoded "/config.yaml" suffix from the path,
+// which produced a malformed directory for any other filename (or panicked
+// for paths shorter than 12 characters).
+func TestCreateDefaultConfig_NonStandardFilename(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "subdir", "custom.yaml")
+
+	if err := config.CreateDefault(configPath); err != nil {
+		t.Fatalf("CreateDefault failed on non-standard filename: %v", err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Errorf("config file not created at %s: %v", configPath, err)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[:len(substr)] == substr || len(s) > len(substr) && contains(s[1:], substr)
 }

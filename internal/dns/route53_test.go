@@ -140,6 +140,72 @@ func TestRoute53Client_UpdateIP_DryRun(t *testing.T) {
 	}
 }
 
+// TestRoute53Client_GetCurrentIP_EmptyHostname verifies that an empty
+// hostname does not panic. Config.Validate() should catch this earlier,
+// but the Route53 client must not assume — the prior `fqdn[len(fqdn)-1]`
+// indexing crashed at runtime on empty strings.
+func TestRoute53Client_GetCurrentIP_EmptyHostname(t *testing.T) {
+	client := &Route53Client{
+		client:       &mockRoute53Client{},
+		hostedZoneID: "Z123456",
+		hostname:     "",
+		ttl:          300,
+	}
+	// Must not panic. Empty is still not a valid lookup key so we expect
+	// an error (from the "A record not found" path), but not a crash.
+	_, err := client.GetCurrentIP()
+	if err == nil {
+		t.Error("Expected error for empty hostname, got nil")
+	}
+}
+
+// TestRoute53Client_UpdateIP_EmptyHostname verifies that UpdateIP also
+// handles an empty hostname without panicking.
+func TestRoute53Client_UpdateIP_EmptyHostname(t *testing.T) {
+	client := &Route53Client{
+		client:       &mockRoute53Client{},
+		hostedZoneID: "Z123456",
+		hostname:     "",
+		ttl:          300,
+	}
+	// Must not panic.
+	_ = client.UpdateIP("1.2.3.4", false)
+}
+
+// TestRoute53Client_AlreadyDottedHostname verifies that a hostname that
+// already ends with "." is passed through unchanged (no double-dot).
+func TestRoute53Client_AlreadyDottedHostname(t *testing.T) {
+	var captured string
+	mockClient := &mockRoute53Client{
+		listResourceRecordSetsFunc: func(ctx context.Context, params *route53.ListResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
+			captured = *params.StartRecordName
+			return &route53.ListResourceRecordSetsOutput{
+				ResourceRecordSets: []types.ResourceRecordSet{
+					{
+						Name: aws.String("test.example.com."),
+						Type: types.RRTypeA,
+						ResourceRecords: []types.ResourceRecord{
+							{Value: aws.String("1.2.3.4")},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+	client := &Route53Client{
+		client:       mockClient,
+		hostedZoneID: "Z123456",
+		hostname:     "test.example.com.", // already dotted
+		ttl:          300,
+	}
+	if _, err := client.GetCurrentIP(); err != nil {
+		t.Fatalf("GetCurrentIP failed: %v", err)
+	}
+	if captured != "test.example.com." {
+		t.Errorf("expected StartRecordName=%q (no double-dot), got %q", "test.example.com.", captured)
+	}
+}
+
 func TestRoute53Client_UpdateIP_Error(t *testing.T) {
 	mockClient := &mockRoute53Client{
 		changeResourceRecordSetsFunc: func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {

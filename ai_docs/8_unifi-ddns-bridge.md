@@ -409,10 +409,12 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (89 tests across 10 packages).
 **Findings:** Straightforward fix. No surprises. Behaviour on malformed-but-recoverable configs (e.g. user wants to reinitialise with `dddns config init`) is unchanged only for the not-found path; a syntactically-invalid existing file blocks all commands including `config init` — the user must delete or rename it first. Documented this implicit contract in the code comment.
 
-**0.4. Guard empty hostname in Route53 client.**
-- `internal/dns/route53.go` — replace `fqdn[len(fqdn)-1] != '.'` with `strings.HasSuffix(fqdn, ".")`. Panics-on-empty becomes graceful handling, defense in depth behind `Validate()`.
-- Tests: empty, dotted, undotted hostnames.
-- **Accept:** no panic; behavior identical for non-empty input.
+**0.4. Guard empty hostname in Route53 client.** ✅ Completed
+- `internal/dns/route53.go` — both `GetCurrentIP` and `UpdateIP` now use `strings.HasSuffix(fqdn, ".")` instead of `fqdn[len(fqdn)-1] != '.'`. The prior indexing panicked at runtime when called with an empty hostname; `Config.Validate()` catches this upstream, but the client now handles it safely as defense in depth.
+- Tests added: `TestRoute53Client_GetCurrentIP_EmptyHostname`, `TestRoute53Client_UpdateIP_EmptyHostname`, `TestRoute53Client_AlreadyDottedHostname` (asserts no double-dot when the configured hostname already ends with `.`).
+
+**Status:** ✅ Complete. Full suite green (92 tests across 10 packages).
+**Findings:** No surprises. The fix was a two-line swap plus adding `strings` to the imports. Behavior on non-empty inputs is identical.
 
 ### Phase A — Prep refactors (no behavior change)
 

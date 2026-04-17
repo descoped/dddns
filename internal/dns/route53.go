@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -58,7 +59,7 @@ func (r *Route53Client) GetCurrentIP() (string, error) {
 	ctx := context.TODO()
 	// Ensure hostname ends with a dot for Route53
 	fqdn := r.hostname
-	if fqdn[len(fqdn)-1] != '.' {
+	if !strings.HasSuffix(fqdn, ".") {
 		fqdn = fqdn + "."
 	}
 
@@ -96,7 +97,7 @@ func (r *Route53Client) UpdateIP(newIP string, dryRun bool) error {
 	ctx := context.TODO()
 	// Ensure hostname ends with a dot for Route53
 	fqdn := r.hostname
-	if fqdn[len(fqdn)-1] != '.' {
+	if !strings.HasSuffix(fqdn, ".") {
 		fqdn = fqdn + "."
 	}
 

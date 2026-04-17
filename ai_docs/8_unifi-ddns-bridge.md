@@ -457,9 +457,12 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase C — Server core
 
-**C1. `internal/server/cidr.go` + unit tests.**
-- `IsAllowed(remoteAddr, cidrs) bool` with IPv4/IPv6 support.
-- Tests: loopback, RFC1918, public, malformed.
+**C1. `internal/server/cidr.go` + unit tests.** ✅ Completed
+- New package `internal/server` with `IsAllowed(remoteAddr, cidrs) bool`. Accepts `host:port` or a bare IP, strips the IPv6 `%zone` suffix if present, parses each CIDR with `net.ParseCIDR`, returns true on the first containing network. Fails closed on empty input, unparseable host, or all-malformed CIDRs.
+- Table-driven `TestIsAllowed` with 18 subtests: loopback v4 with and without port, each RFC1918 range, public addresses (8.8.8.8, 1.1.1.1), narrower subnet hit/miss, IPv6 loopback, public IPv6 deny, link-local IPv6 with `%zone`, a malformed CIDR entry silently skipped, and all-malformed CIDRs denying.
+
+**Status:** ✅ Complete. Full suite green (130 tests across 12 packages).
+**Findings:** Clean drop-in. `net.SplitHostPort` handles `[v6]:port` correctly, so no IPv6 special-casing was needed for the port split.
 
 **C2. `internal/server/auth.go` + unit tests.**
 - Constant-time password compare.

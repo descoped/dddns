@@ -1,5 +1,9 @@
 # Provider Architecture (HTTP-only)
 
+**Status:** Planned — design for unstarted work. Nothing in `main` implements this yet.
+**Confidence:** Medium — direction is committed; several quantitative claims carry verification callouts. See §"Verification needed before implementing".
+**Last reviewed:** 2026-04-17
+
 ## Scope
 
 Support DNS providers beyond AWS Route53 via a thin provider interface over HTTP-only transport. Retire the AWS SDK dependency so the binary stays small enough for UDM/UDR and Raspberry Pi (<10 MB).

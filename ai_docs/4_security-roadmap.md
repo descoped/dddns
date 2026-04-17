@@ -1,5 +1,9 @@
 # Security Roadmap
 
+**Status:** Partial — the "Already shipped" section tracks what's in `main`; "Open work" items are not yet implemented.
+**Confidence:** High — shipped items fact-checked against the code; open items are honest proposals with known trade-offs.
+**Last reviewed:** 2026-04-17
+
 ## Scope
 
 Credential protection work still open after the UniFi bridge ship. What has already landed is listed up front so it isn't re-planned.

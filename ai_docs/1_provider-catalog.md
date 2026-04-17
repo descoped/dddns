@@ -1,5 +1,9 @@
 # Provider Catalog
 
+**Status:** Planned — catalogue for providers not yet shipped. AWS Route53 (the shipped provider) is not listed here; its SDK-to-REST port is covered by `0_provider-architecture.md`.
+**Confidence:** High — reference metadata only; low implementation risk.
+**Last reviewed:** 2026-04-17
+
 ## Scope
 
 Which DNS providers to prioritize adding to dddns once the provider architecture is in place, and what to require of each implementation.

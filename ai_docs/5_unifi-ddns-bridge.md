@@ -1,6 +1,8 @@
 # UniFi-to-Route53 DDNS Bridge
 
-*Shipped feature reference. This doc describes the design as it landed; per-step implementation history lives in git log.*
+**Status:** Shipped — on `main` since 2026-04-17. Describes the design as implemented.
+**Confidence:** High — reference for shipped code; per-step implementation history lives in git log.
+**Last reviewed:** 2026-04-17
 
 ## 1. Overview
 

@@ -1,5 +1,9 @@
 # Non-UniFi Event-Driven IP Change Detection
 
+**Status:** Planned — recipes documented as user-installable hooks; dddns does not ship an installer for any of them.
+**Confidence:** Medium — scripts derived from each platform's hook contract, not validated on running systems. See §"Verification needed before promoting any recipe".
+**Last reviewed:** 2026-04-17
+
 ## Scope
 
 Make WAN IP change detection near-instant on platforms other than UniFi OS.

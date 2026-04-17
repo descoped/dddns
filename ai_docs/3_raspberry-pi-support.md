@@ -1,5 +1,9 @@
 # Raspberry Pi Support
 
+**Status:** Shipped — ARM64 / ARMv7 binaries are published in every release; the install guide below reflects current state.
+**Confidence:** High — install paths, config layout, and resource footprint match the shipped binary.
+**Last reviewed:** 2026-04-17
+
 ## Scope
 
 Install and operate dddns on Raspberry Pi 2/3/4/5/Zero. Target the Pi's constrained CPU, RAM, and SD card write budget.

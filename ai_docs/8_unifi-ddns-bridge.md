@@ -264,7 +264,7 @@ package updater
 type Options struct {
     Force      bool
     DryRun     bool
-    OverrideIP string  // empty = fetch via myip.GetPublicIP(); non-empty = use as-is (testing / serve-mode hand-off)
+    OverrideIP string  // empty = resolve via cfg.IPSource dispatch; non-empty = use as-is
 }
 
 type Result struct {
@@ -277,9 +277,9 @@ type Result struct {
 func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, error)
 ```
 
-- `cmd/update.go` passes `OverrideIP: customIP` if `--ip` is used; else empty.
-- `internal/server/handler.go` fetches `verifiedIP` itself (to build audit log), then passes `OverrideIP: verifiedIP` — avoids the double fetch.
-- Cache reads/writes live only in `internal/updater`.
+- `cmd/update.go` passes `OverrideIP: customIP` if `--ip` is used; else empty (updater resolves via `cfg.IPSource`).
+- `internal/server/handler.go` calls `wanip.FromInterface` itself (to build audit entry with claim-vs-real), then passes `OverrideIP: localIP` to the updater.
+- Cache reads/writes live only in `internal/updater`. The internal `resolveIP(cfg)` helper switches on `cfg.IPSource` — `local` → `wanip.FromInterface`, `remote` → `myip.GetPublicIP`, empty/`auto` → mode-based default.
 
 ### 9.2 `crypto.EncryptString` / `DecryptString`
 
@@ -452,11 +452,12 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - JSONL writer; open-append, size-based rotation at 10 MB; atomic write.
 - Tests: concurrent writes serialize correctly, rotation triggers at threshold.
 
-**C4. `internal/wanip` + unit tests.**
-- `FromInterface(ifaceName string) (net.IP, error)` — returns the first non-loopback, non-private, non-link-local IPv4 on the named interface. Empty `ifaceName` triggers auto-detection: pick the interface on the default route, filtered for a publicly-routable IPv4.
+**C4. `internal/wanip` + updater dispatch + unit tests.**
+- New package `internal/wanip`. `FromInterface(ifaceName string) (net.IP, error)` returns the first non-loopback, non-private, non-link-local IPv4 on the named interface. Empty `ifaceName` triggers auto-detection: pick the interface on the default route, filtered for a publicly-routable IPv4.
 - Treat CGNAT (`100.64.0.0/10`) as non-usable (CGNAT users can't usefully run dddns anyway).
-- Tests: mocked interface list covering dotted-quad IPv4, RFC1918, CGNAT, PPPoE (`ppp0`), no-address states; fake default-route file.
-- Integrates with `cmd/update.go` via the `ip_source` config field (see §6).
+- Add package-private `resolveIP(cfg)` in `internal/updater`: switches on `cfg.IPSource` (`local` → `wanip.FromInterface(cfg.Server.WANInterface)`; `remote` → `myip.GetPublicIP()`; empty/`auto` → `local` when UDM profile, else `remote`). Called from `updater.Update` when `Options.OverrideIP` is empty.
+- Tests: mocked interface list covering dotted-quad IPv4, RFC1918, CGNAT, PPPoE (`ppp0`), no-address states; fake default-route file. Dispatch tests in `internal/updater` covering each `ip_source` value plus the UDM-profile auto path.
+- **Accept:** cron on UDM resolves via local interface by default; non-UDM cron uses `checkip.amazonaws.com` unchanged; explicit `ip_source` overrides honored.
 
 **C5. `internal/server/handler.go` + `internal/server/status.go` (writer) + unit tests.**
 - Parse query, validate method, hostname, (loose) myip sanity.

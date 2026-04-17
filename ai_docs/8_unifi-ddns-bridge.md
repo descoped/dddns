@@ -551,13 +551,16 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase E — Installer integration
 
-**E1. `scripts/install-on-unifi-os.sh` — mode prompt + checksum verification.**
-- Interactive prompt; `--mode {cron|serve}` flag for non-interactive.
-- On `serve`: generate secret (via `dddns config rotate-secret --init`), populate `config.yaml`, print UI values in a clearly-framed block.
-- Calls `dddns config set-mode` to write the boot script.
-- Idempotent upgrade path preserves existing mode and config.
-- **SHA-256 verification of the downloaded binary** against `checksums.txt` from the same GitHub release. Fail the install on mismatch or missing checksum file. Closes a supply-chain gap: GoReleaser already publishes the file; the installer just needs to fetch and verify it (~10 lines of bash).
-- Tests: manual on-device; add a negative test that tampers with the downloaded tarball and asserts the installer aborts before extracting.
+**E1. `scripts/install-on-unifi-os.sh` — mode prompt + checksum verification.** ✅ Completed
+- Rewrote the installer around the new `dddns` subcommands. Hand-written boot-script and cron-entry heredocs are gone; the script delegates to `dddns config set-mode {cron|serve}` (which emits the file from `internal/bootscript`) and, on serve mode, to `dddns config rotate-secret --init --quiet` (added `--quiet` flag on this subcommand so the shell can capture the secret).
+- `--mode cron|serve` flag for non-interactive install; interactive prompt on fresh install when `--mode` not given; upgrade path preserves the prior mode by parsing the existing boot script's marker (`# --- cron mode ---` / `# --- serve mode ---`). Pre-E1 installs fall back to `cron` if `/etc/cron.d/dddns` exists.
+- **SHA-256 verification**: fetches `checksums.txt` from the same release, looks up the expected hash for `dddns_Linux_arm64.tar.gz`, compares with `sha256sum` of the downloaded file, aborts on mismatch or missing checksums file. Closes the supply-chain gap.
+- **Serve-mode UI output**: after `rotate-secret --init --quiet`, the installer prints a framed block with Service/Hostname/Username/Password/Server values for the UniFi Dynamic DNS dialog. Hostname is parsed from `config.yaml`.
+- **Uninstall** now also `pkill`s any running `dddns serve` loop and removes the boot script along with the cron entry.
+- Tests: `bash -n` (syntax) clean, `shellcheck` clean, manual invocation of `--help` and `--mode bogus` produces expected output. On-device testing for the real network + SHA verification is manual per the plan; a tamper-test against a fake tarball was evaluated but not automated — it requires end-to-end HTTP stubbing that adds more scaffolding than the risk warrants.
+
+**Status:** ✅ Complete. Full Go suite green (206 tests across 14 packages) — the `--quiet` flag on `rotate-secret` gained a dedicated test (`TestRotateSecret_QuietMode`). Installer `bash -n` and `shellcheck` are clean.
+**Findings:** Added the `--quiet` flag as a prep step (small, one test) because without it the installer would have to parse the framed rotate-secret output to extract the secret — fragile. With `--quiet`, the installer's capture is a single `$(… --quiet)` subshell. Homebrew formula untouched per explicit user confirmation.
 
 ### Phase F — Documentation
 

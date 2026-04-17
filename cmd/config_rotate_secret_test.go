@@ -216,6 +216,30 @@ func TestRotateSecret_SecureConfig(t *testing.T) {
 	}
 }
 
+// TestRotateSecret_QuietMode verifies --quiet prints only the secret on
+// stdout so shell callers (the installer) can capture it.
+func TestRotateSecret_QuietMode(t *testing.T) {
+	cacheFile := filepath.Join(t.TempDir(), "cache.txt")
+	_ = writeInitialConfig(t, baseRotateConfig(cacheFile))
+
+	rotateSecretQuiet = true
+	t.Cleanup(func() { rotateSecretQuiet = false })
+
+	var buf bytes.Buffer
+	rotateSecretCmd.SetOut(&buf)
+	if err := runRotateSecret(rotateSecretCmd, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	if len(got) != 64 {
+		t.Errorf("quiet output should be exactly the 64-char secret, got %d chars: %q", len(got), got)
+	}
+	if strings.Contains(got, "New shared secret generated") {
+		t.Errorf("quiet output should not contain the framed header: %q", got)
+	}
+}
+
 func TestGenerateSecret_LengthAndUniqueness(t *testing.T) {
 	a, err := generateSecret()
 	if err != nil {

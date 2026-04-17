@@ -14,7 +14,10 @@ import (
 	"github.com/spf13/viper"
 )
 
-var rotateSecretInit bool
+var (
+	rotateSecretInit  bool
+	rotateSecretQuiet bool
+)
 
 var rotateSecretCmd = &cobra.Command{
 	Use:   "rotate-secret",
@@ -35,6 +38,7 @@ is how the installer seeds serve mode.`,
 func init() {
 	configCmd.AddCommand(rotateSecretCmd)
 	rotateSecretCmd.Flags().BoolVar(&rotateSecretInit, "init", false, "Create a default server block if one does not exist")
+	rotateSecretCmd.Flags().BoolVar(&rotateSecretQuiet, "quiet", false, "Print only the new secret on stdout (for scripting)")
 }
 
 // bindDefault is the fail-closed default for a freshly-initialised
@@ -90,7 +94,11 @@ func runRotateSecret(cmd *cobra.Command, _ []string) error {
 		Action: "rotate-secret",
 	})
 
-	printNewSecret(cmd.OutOrStdout(), newSecret, path)
+	if rotateSecretQuiet {
+		fmt.Fprintln(cmd.OutOrStdout(), newSecret)
+	} else {
+		printNewSecret(cmd.OutOrStdout(), newSecret, path)
+	}
 	return nil
 }
 

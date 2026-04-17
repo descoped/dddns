@@ -92,7 +92,9 @@ func runVerify(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create Route53 client: %w", err)
 	}
 
-	route53IP, err := r53Client.GetCurrentIP()
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer verifyCancel()
+	route53IP, err := r53Client.GetCurrentIP(verifyCtx)
 	if err != nil {
 		log.Printf("Route53 record:     NOT FOUND (%v)", err)
 	} else {

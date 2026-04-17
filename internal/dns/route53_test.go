@@ -53,7 +53,7 @@ func TestRoute53Client_GetCurrentIP(t *testing.T) {
 		ttl:          300,
 	}
 
-	ip, err := client.GetCurrentIP()
+	ip, err := client.GetCurrentIP(context.Background())
 	if err != nil {
 		t.Fatalf("GetCurrentIP failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestRoute53Client_GetCurrentIP_NotFound(t *testing.T) {
 		ttl:          300,
 	}
 
-	_, err := client.GetCurrentIP()
+	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
 		t.Error("Expected error for not found record, got nil")
 	}
@@ -99,7 +99,7 @@ func TestRoute53Client_GetCurrentIP_Error(t *testing.T) {
 		ttl:          300,
 	}
 
-	_, err := client.GetCurrentIP()
+	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
 		t.Error("Expected error from AWS, got nil")
 	}
@@ -113,7 +113,7 @@ func TestRoute53Client_UpdateIP(t *testing.T) {
 		ttl:          300,
 	}
 
-	err := client.UpdateIP("5.6.7.8", false)
+	err := client.UpdateIP(context.Background(), "5.6.7.8", false)
 	if err != nil {
 		t.Fatalf("UpdateIP failed: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRoute53Client_UpdateIP_DryRun(t *testing.T) {
 		ttl:          300,
 	}
 
-	err := client.UpdateIP("5.6.7.8", true)
+	err := client.UpdateIP(context.Background(), "5.6.7.8", true)
 	if err != nil {
 		t.Fatalf("UpdateIP dry run failed: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestRoute53Client_GetCurrentIP_EmptyHostname(t *testing.T) {
 	}
 	// Must not panic. Empty is still not a valid lookup key so we expect
 	// an error (from the "A record not found" path), but not a crash.
-	_, err := client.GetCurrentIP()
+	_, err := client.GetCurrentIP(context.Background())
 	if err == nil {
 		t.Error("Expected error for empty hostname, got nil")
 	}
@@ -169,7 +169,7 @@ func TestRoute53Client_UpdateIP_EmptyHostname(t *testing.T) {
 		ttl:          300,
 	}
 	// Must not panic.
-	_ = client.UpdateIP("1.2.3.4", false)
+	_ = client.UpdateIP(context.Background(), "1.2.3.4", false)
 }
 
 // TestRoute53Client_AlreadyDottedHostname verifies that a hostname that
@@ -198,7 +198,7 @@ func TestRoute53Client_AlreadyDottedHostname(t *testing.T) {
 		hostname:     "test.example.com.", // already dotted
 		ttl:          300,
 	}
-	if _, err := client.GetCurrentIP(); err != nil {
+	if _, err := client.GetCurrentIP(context.Background()); err != nil {
 		t.Fatalf("GetCurrentIP failed: %v", err)
 	}
 	if captured != "test.example.com." {
@@ -220,7 +220,7 @@ func TestRoute53Client_UpdateIP_Error(t *testing.T) {
 		ttl:          300,
 	}
 
-	err := client.UpdateIP("5.6.7.8", false)
+	err := client.UpdateIP(context.Background(), "5.6.7.8", false)
 	if err == nil {
 		t.Error("Expected error from AWS update, got nil")
 	}

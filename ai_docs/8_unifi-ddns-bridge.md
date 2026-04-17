@@ -418,14 +418,16 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase A — Prep refactors (no behavior change)
 
-**A1. Extract `internal/updater`; add context and signals.**
-- Move update core out of `cmd/update.go`; new package `internal/updater`.
-- `Update(ctx, cfg, Options) (*Result, error)` with `OverrideIP` option.
-- `cmd/update.go` shrinks to: IP detect (if no override) → proxy check → `updater.Update` → print.
-- **Plumb `context.Context` with a top-level timeout** (default 30s, overridable). Replace all `context.TODO()` in `internal/dns/route53.go` with the passed-in context so Route53 hangs become bounded.
-- **Signal handling in `cmd/update.go`**: use `signal.NotifyContext(ctx, SIGINT, SIGTERM)` so cron-killed updates cancel cleanly instead of leaving the cache inconsistent with an in-flight Route53 call.
-- Tests: `TestReadCachedIP` and `TestWriteCachedIP` move verbatim from `cmd/update_test.go` to `internal/updater/updater_test.go`; `TestUpdateCommandDryRun` stays in `cmd/` (it tests cobra wiring, not update logic); subprocess tests in `tests/integration_test.go` are refactor-transparent. New tests: `TestUpdate_OverrideIP`, `TestUpdate_ContextTimeout` (mock Route53 blocks → ctx cancels).
-- **Accept:** `dddns update` happy-path identical; hangs bounded; `SIGTERM` exits cleanly.
+**A1. Extract `internal/updater`; add context and signals.** ✅ Completed
+- New package `internal/updater` with `Update(ctx, cfg, Options) (*Result, error)`. Options: `Force`, `DryRun`, `Quiet`, `OverrideIP`, `Client` (a `DNSClient` interface the package exposes — lets tests and the future serve handler inject a mock or a shared client). Result: `Action` (`updated`/`nochg-cache`/`nochg-dns`/`dry-run`), `OldIP`, `NewIP`, `Hostname`.
+- `cmd/update.go` reduced to: load config, build signal-cancellable + timeout-bounded context, validate `--ip`, delegate. `logInfo`/flag variables removed where the updater owns them.
+- `internal/dns/route53.go`: `GetCurrentIP` and `UpdateIP` now take `ctx context.Context`; every `context.TODO()` on a request path is gone. `NewRoute53Client` still uses `context.TODO()` internally for `config.LoadDefaultConfig` — acceptable because that path is local-only with static credentials.
+- `cmd/update.go` wraps runs in `signal.NotifyContext(ctx, SIGINT, SIGTERM)` + `context.WithTimeout(ctx, 30s)`. Cron-killed updates cancel cleanly; hangs bounded.
+- `cmd/verify.go:r53Client.GetCurrentIP(ctx)` also updated with its own 10s timeout context.
+- Tests: `TestReadCachedIP`, `TestWriteCachedIP`, `TestWriteCachedIP_NestedPath`, `TestWriteCachedIP_RelativePath` moved from `cmd/update_test.go` to `internal/updater/updater_test.go`. `cmd/update_test.go` is now a placeholder (the command itself is covered by `tests/integration_test.go`). Added `TestUpdate_OverrideIP`, `TestUpdate_NoChgDNS`, `TestUpdate_NoChgCache`, `TestUpdate_DryRun`, `TestUpdate_ContextTimeout` using an injected `fakeDNSClient` and `blockingDNSClient`. DNS-package tests were updated to pass `context.Background()` to the new signatures.
+
+**Status:** ✅ Complete. Full suite green (97 tests across 11 packages).
+**Findings:** The extraction was clean — one `DNSClient` interface in the updater package was enough to make the code testable without touching AWS. `cmd/verify.go` also called `GetCurrentIP()` and needed the same context plumbing; easy to miss without a grep. No behavior change observed in integration tests; cron path still logs the same messages in the same order.
 
 **A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.**
 - Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner wrapping `EncryptString(ak + ":" + sk)`.

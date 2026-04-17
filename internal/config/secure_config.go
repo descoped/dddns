@@ -23,7 +23,6 @@ type SecureConfig struct {
 
 	// Operational settings
 	IPCacheFile string `yaml:"ip_cache_file"`
-	SkipProxy   bool   `yaml:"skip_proxy_check"`
 }
 
 // SaveSecure saves config with encrypted credentials
@@ -42,7 +41,6 @@ func SaveSecure(cfg *Config, path string) error {
 		Hostname:            cfg.Hostname,
 		TTL:                 cfg.TTL,
 		IPCacheFile:         cfg.IPCacheFile,
-		SkipProxy:           cfg.SkipProxy,
 	}
 
 	// Marshal to YAML
@@ -105,7 +103,6 @@ func LoadSecure(path string) (*Config, error) {
 		Hostname:     secureCfg.Hostname,
 		TTL:          secureCfg.TTL,
 		IPCacheFile:  secureCfg.IPCacheFile,
-		SkipProxy:    secureCfg.SkipProxy,
 	}, nil
 }
 

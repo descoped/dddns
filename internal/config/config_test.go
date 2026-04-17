@@ -20,8 +20,7 @@ aws_secret_key: "SECRETTEST"
 hosted_zone_id: "Z1234567890ABC"
 hostname: "test.example.com"
 ttl: 600
-ip_cache_file: "/tmp/test-dddns-cache.txt"
-skip_proxy_check: true`
+ip_cache_file: "/tmp/test-dddns-cache.txt"`
 
 	err := os.WriteFile(configFile, []byte(configContent), 0600)
 	if err != nil {
@@ -58,9 +57,6 @@ skip_proxy_check: true`
 	}
 	if cfg.IPCacheFile != "/tmp/test-dddns-cache.txt" {
 		t.Errorf("Expected IPCacheFile '/tmp/test-dddns-cache.txt', got %q", cfg.IPCacheFile)
-	}
-	if !cfg.SkipProxy {
-		t.Errorf("Expected SkipProxy true, got false")
 	}
 }
 
@@ -177,7 +173,6 @@ func TestCreateDefaultConfig(t *testing.T) {
 		"hostname:",
 		"ttl:",
 		"ip_cache_file:",
-		"skip_proxy_check:",
 	}
 
 	for _, field := range requiredFields {

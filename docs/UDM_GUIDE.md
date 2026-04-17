@@ -170,20 +170,10 @@ dddns --version
 
 dddns only makes outbound connections:
 
-- **HTTPS (443)**: to AWS Route53 API
-- **HTTP (80)**: to ip-api.com for proxy detection
+- **HTTPS (443)**: to AWS Route53 API (`route53.amazonaws.com`) and the public-IP lookup (`checkip.amazonaws.com`)
 - **DNS (53)**: for hostname resolution
 
 No inbound ports required.
-
-### VPN Considerations
-
-If using split-tunnel VPN on your UDM:
-
-```yaml
-# /data/.dddns/config.yaml
-skip_proxy_check: true  # Prevents false proxy detection
-```
 
 ### Multi-WAN Setup
 

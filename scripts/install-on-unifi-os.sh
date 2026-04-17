@@ -289,7 +289,6 @@ dns:
 
 operations:
   ip_cache_file: "/data/.dddns/last-ip.txt"
-  skip_proxy_check: false                # Set true if behind VPN
 EOF
 
     chmod 600 "${CONFIG_DIR}/config.yaml"

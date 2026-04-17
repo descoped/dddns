@@ -50,7 +50,6 @@ ttl: 300                          # Time-to-live in seconds (60-86400)
 
 # Operational Settings
 ip_cache_file: "/data/.dddns/last-ip.txt"  # Auto-set based on platform
-skip_proxy_check: false                     # Skip proxy/VPN detection
 ```
 
 ## AWS Credentials
@@ -115,14 +114,6 @@ The cache file contains:
 last_known_ip: 203.0.113.42
 last_updated: 2025-09-13T14:30:00Z
 ```
-
-### skip_proxy_check
-When `false` (default), dddns checks if your IP is from a proxy/VPN and skips updates to prevent setting incorrect IPs.
-
-Set to `true` if:
-- You're behind a corporate proxy
-- You use a VPN but want to update anyway
-- The proxy detection service is unavailable
 
 ## Secure Credentials
 
@@ -207,7 +198,6 @@ hosted_zone_id: "Z0987654321XYZ"
 hostname: "router.example.org"
 ttl: 600
 ip_cache_file: "/data/.dddns/last-ip.txt"  # Persistent location
-skip_proxy_check: false
 ```
 
 ### Cron Setup

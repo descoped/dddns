@@ -73,7 +73,6 @@ ttl: 300
 
 # Operational Settings
 ip_cache_file: "/tmp/dddns-last-ip.txt"
-skip_proxy_check: false
 ```
 
 **Important**: The config file must have restricted permissions (600):

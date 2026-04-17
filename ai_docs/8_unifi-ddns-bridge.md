@@ -135,7 +135,6 @@ hosted_zone_id: Z…
 hostname: home.route-66.no
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
-skip_proxy_check: false
 ip_source: auto                      # auto | local | remote (see §3 L4)
 
 server:
@@ -173,7 +172,6 @@ hosted_zone_id: Z…
 hostname: home.route-66.no
 ttl: 300
 ip_cache_file: /data/.dddns/last-ip.txt
-skip_proxy_check: false
 
 server:
   bind: "127.0.0.1:53353"
@@ -402,7 +400,7 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 **Status:** ✅ Complete. Full suite green (82 tests across 10 packages).
 **Findings — significant:** `ip-api.com` free tier does **not** support HTTPS. Every request we've ever made over HTTPS has returned `{"status":"fail","message":"SSL unavailable for this endpoint, order a key at https://members.ip-api.com/"}` and been silently collapsed to "not a proxy" by the old code. In effect, the proxy check has been a no-op in production for the entire lifetime of dddns. After this fix, the check now correctly errors out — which in cron mode means every `dddns update` run will log `Warning: proxy check failed: ip-api.com request failed: SSL unavailable...`. Users can suppress this by setting `skip_proxy_check: true` in config.
-**Follow-up work (not in this step):** switch ip-api.com calls to HTTP (free tier requires it), or accelerate Phase G6 (retire the proxy check entirely). The latter is the right long-term move — HTTP leaks the lookup and the check provides marginal value anyway.
+**Follow-up work:** resolved by retiring the entire ip-api.com dependency in the immediately-following commit (see G6 below). The proxy check is now gone, replaced by stdlib-only IP validation.
 
 **0.3. Fail-fast on malformed config.**
 - `cmd/root.go:initConfig` — on `ReadInConfig` errors other than `ConfigFileNotFoundError`, print the error and `os.Exit(1)`. Today it prints to stderr and silently continues, producing a confusing downstream `aws_access_key is required` error for what is actually a YAML syntax problem.
@@ -542,7 +540,7 @@ These are deliberately deferred to keep the initial surface small and well-teste
 - **G3.** Non-root execution — add a `dddns` system user, adjust config file ownership, use `setcap` for any privileged operations. Requires installer rework.
 - **G4.** CloudTrail / SNS integration guide in docs (detect out-of-band Route53 changes).
 - **G5.** Pluggable notification backend for `on_auth_failure` (ntfy, Slack webhook, SMTP) as a small built-in alternative to shell hooks.
-- **G6.** Retire the `ip-api.com` dependency. Once `ip_source: local` is the default for router platforms, the only caller of `IsProxyIP` is `ip_source: remote` on non-router platforms. Consider dropping the proxy check entirely — a returned IP that fails `net.IP.IsGlobalUnicast()` or falls into reserved ranges can be rejected without consulting a third-party API.
+- ~~**G6.** Retire the `ip-api.com` dependency.~~ ✅ Completed. `IsProxyIP`, `geoLocation`, `toJSON`, the `ip-api.com` base URL, and the `skip_proxy_check` config field were all removed. Replaced by `myip.ValidatePublicIP`, a stdlib-only helper that rejects malformed, IPv6, loopback, link-local, unspecified, multicast, and private (RFC1918) addresses. The `--check-proxy` flag on `dddns ip` was removed along with the feature.
 
 ### Estimated Scope
 

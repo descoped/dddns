@@ -25,7 +25,6 @@ type Config struct {
 
 	// Operational settings
 	IPCacheFile string `mapstructure:"ip_cache_file"`
-	SkipProxy   bool   `mapstructure:"skip_proxy_check"`
 	ForceUpdate bool   `mapstructure:"force_update"`
 	DryRun      bool   `mapstructure:"dry_run"`
 }
@@ -50,7 +49,6 @@ func Load() (*Config, error) {
 		AWSRegion:   "us-east-1",
 		TTL:         300,
 		IPCacheFile: profile.Current.GetCachePath(),
-		SkipProxy:   false,
 		ForceUpdate: false,
 		DryRun:      false,
 	}
@@ -107,7 +105,6 @@ ttl: 300                 # TTL in seconds
 
 # Operational Settings
 ip_cache_file: "%s"  # Where to store last known IP
-skip_proxy_check: false                   # Skip proxy/VPN detection
 `
 
 	// Create directory if needed

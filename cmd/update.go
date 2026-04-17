@@ -76,9 +76,8 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	// 1. Get current public IP (or use custom IP if provided)
 	var currentIP string
 	if customIP != "" {
-		// Validate custom IP
-		if net.ParseIP(customIP) == nil {
-			return fmt.Errorf("invalid IP address: %s", customIP)
+		if err := myip.ValidatePublicIP(customIP); err != nil {
+			return fmt.Errorf("invalid --ip value: %w", err)
 		}
 		currentIP = customIP
 		logInfo("Using custom IP: %s", currentIP)
@@ -87,7 +86,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to get public IP: %w", err)
 		}
-		currentIP = strings.TrimSpace(detectedIP)
+		currentIP = detectedIP
 		logInfo("Current public IP: %s", currentIP)
 	}
 
@@ -105,23 +104,13 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// 4. Check if proxy (optional) - skip for custom IP
-	if !cfg.SkipProxy && customIP == "" {
-		isProxy, err := myip.IsProxyIP(&currentIP)
-		if err != nil {
-			logInfo("Warning: proxy check failed: %v", err)
-		} else if isProxy {
-			return fmt.Errorf("proxy/VPN detected for IP %s, skipping update", currentIP)
-		}
-	}
-
-	// 5. Connect to Route53
+	// 4. Connect to Route53
 	r53Client, err := dns.NewRoute53Client(cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
 	if err != nil {
 		return fmt.Errorf("failed to create Route53 client: %w", err)
 	}
 
-	// 6. Get current DNS record
+	// 5. Get current DNS record
 	dnsIP, err := r53Client.GetCurrentIP()
 	if err != nil {
 		logInfo("Warning: could not get current DNS record: %v", err)
@@ -140,7 +129,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// 7. Update Route53 (or show what would be done)
+	// 6. Update Route53 (or show what would be done)
 	if cfg.DryRun {
 		log.Printf("[DRY RUN] Would update %s to %s (TTL: %d)", cfg.Hostname, currentIP, cfg.TTL)
 		if cachedIP != "" {
@@ -154,7 +143,7 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		// Always show successful updates, even in quiet mode
 		log.Printf("Successfully updated %s to %s", cfg.Hostname, currentIP)
 
-		// 8. Update cache file
+		// 7. Update cache file
 		if err := writeCachedIP(cfg.IPCacheFile, currentIP); err != nil {
 			logInfo("Warning: failed to update cache file: %v", err)
 			// Don't fail the whole operation for this

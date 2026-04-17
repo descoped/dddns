@@ -18,7 +18,6 @@ aws_secret_key: TEST_SECRET_KEY
 hosted_zone_id: Z1234567890ABC
 hostname: test.example.com
 ttl: 300
-skip_proxy_check: false
 ip_cache_file: /tmp/dddns-last-ip.txt`
 
 	// Write the config first
@@ -44,7 +43,6 @@ aws_secret_key: TEST_SECRET_KEY
 hosted_zone_id: Z123456
 hostname: test.example.com
 ttl: 300
-skip_proxy_check: false
 ip_cache_file: /tmp/dddns-last-ip.txt`
 
 	err := os.WriteFile(configPath, []byte(configContent), 0600)

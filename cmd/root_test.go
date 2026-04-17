@@ -51,7 +51,6 @@ aws_secret_key: TEST_SECRET
 hosted_zone_id: ZTEST
 hostname: test.example.com
 ttl: 300
-skip_proxy_check: false
 ip_cache_file: /tmp/test-cache.txt`
 
 	err := os.WriteFile(cfgFile, []byte(configContent), 0600)

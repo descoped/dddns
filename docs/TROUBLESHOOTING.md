@@ -258,24 +258,6 @@ host route53.amazonaws.com
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 ```
 
-### Proxy/VPN Detected
-
-**Symptom**: `Error: proxy/VPN detected for IP, skipping update`
-
-**Solutions**:
-
-```bash
-# Skip proxy check if behind corporate proxy
-# In config.yaml:
-skip_proxy_check: true
-
-# Or via command line
-dddns update --skip-proxy
-
-# Check if actually using proxy
-curl -s http://ip-api.com/json/ | jq .proxy
-```
-
 ### Timeout Errors
 
 **Symptom**: `Error: context deadline exceeded`

@@ -14,137 +14,153 @@ import (
 	"strings"
 )
 
-// GetDeviceKey derives a unique encryption key from device-specific data
+// GetDeviceKey derives a unique encryption key from device-specific data.
+// It dispatches to a platform-specific collector, falling back to a
+// hostname-based identity when none is available, then SHA-256s the
+// result together with a project-wide salt.
 func GetDeviceKey() ([]byte, error) {
 	var deviceID string
-
-	// Platform-specific device ID retrieval
 	switch runtime.GOOS {
 	case "linux":
-		// Try UDM-specific identifiers first
-		if data, err := os.ReadFile("/proc/ubnthal/system.info"); err == nil {
-			lines := strings.Split(string(data), "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "serialno=") {
-					deviceID = strings.TrimPrefix(line, "serialno=")
-					break
-				} else if strings.HasPrefix(line, "device.hashid=") {
-					deviceID = strings.TrimPrefix(line, "device.hashid=")
-					break
-				}
-			}
+		if id, ok := deviceIDLinux(); ok {
+			deviceID = id
 		}
-
-		// Try Docker container ID
-		if deviceID == "" {
-			if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
-				lines := strings.Split(string(data), "\n")
-				for _, line := range lines {
-					if strings.Contains(line, "docker") {
-						parts := strings.Split(line, "/")
-						if len(parts) > 0 {
-							deviceID = parts[len(parts)-1]
-							if len(deviceID) > 12 {
-								deviceID = deviceID[:12] // Use first 12 chars of container ID
-							}
-							break
-						}
-					}
-				}
-			}
-		}
-
-		// Fallback to MAC address
-		if deviceID == "" {
-			if data, err := os.ReadFile("/sys/class/net/eth0/address"); err == nil {
-				deviceID = strings.TrimSpace(string(data))
-			}
-		}
-
 	case "darwin":
-		// macOS: Use hardware UUID
-		if out, err := exec.Command("system_profiler", "SPHardwareDataType").Output(); err == nil {
-			lines := strings.Split(string(out), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "Hardware UUID:") {
-					parts := strings.Split(line, ":")
-					if len(parts) > 1 {
-						deviceID = strings.TrimSpace(parts[1])
-						break
-					}
-				}
-			}
+		if id, ok := deviceIDDarwin(); ok {
+			deviceID = id
 		}
-
-		// Fallback: Use serial number
-		if deviceID == "" {
-			if out, err := exec.Command("ioreg", "-l").Output(); err == nil {
-				lines := strings.Split(string(out), "\n")
-				for _, line := range lines {
-					if strings.Contains(line, "IOPlatformSerialNumber") {
-						parts := strings.Split(line, "=")
-						if len(parts) > 1 {
-							deviceID = strings.Trim(strings.TrimSpace(parts[1]), `"`)
-							break
-						}
-					}
-				}
-			}
-		}
-
 	case "windows":
-		// Windows: Use machine GUID from registry
-		if out, err := exec.Command("wmic", "csproduct", "get", "UUID").Output(); err == nil {
-			lines := strings.Split(string(out), "\n")
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" && line != "UUID" && !strings.Contains(line, "UUID") {
-					deviceID = line
-					break
-				}
-			}
-		}
-
-		// Fallback: Use ComputerSystemProduct UUID
-		if deviceID == "" {
-			if out, err := exec.Command("cmd", "/c", "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid").Output(); err == nil {
-				lines := strings.Split(string(out), "\n")
-				for _, line := range lines {
-					if strings.Contains(line, "MachineGuid") {
-						parts := strings.Fields(line)
-						if len(parts) > 2 {
-							deviceID = parts[len(parts)-1]
-							break
-						}
-					}
-				}
-			}
+		if id, ok := deviceIDWindows(); ok {
+			deviceID = id
 		}
 	}
-
-	// Last resort: hostname + username for uniqueness
 	if deviceID == "" {
-		hostname, err := os.Hostname()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get device identifier: %w", err)
+		id, ok := deviceIDFallback()
+		if !ok {
+			return nil, fmt.Errorf("failed to get device identifier")
 		}
-		// Add username for extra uniqueness
-		if user := os.Getenv("USER"); user != "" {
-			deviceID = hostname + "-" + user
-		} else if user := os.Getenv("USERNAME"); user != "" {
-			deviceID = hostname + "-" + user
-		} else {
-			deviceID = hostname
+		deviceID = id
+	}
+
+	const salt = "dddns-vault-2025"
+	hash := sha256.Sum256([]byte(deviceID + salt))
+	return hash[:], nil
+}
+
+// deviceIDLinux tries UDM hardware identifiers, then Docker container ID,
+// then the eth0 MAC. Returns false if none are readable.
+func deviceIDLinux() (string, bool) {
+	// Try UDM-specific identifiers first.
+	if data, err := os.ReadFile("/proc/ubnthal/system.info"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if v, ok := strings.CutPrefix(line, "serialno="); ok {
+				return v, true
+			}
+			if v, ok := strings.CutPrefix(line, "device.hashid="); ok {
+				return v, true
+			}
 		}
 	}
 
-	// Add a salt for extra security
-	salt := "dddns-vault-2025"
-	combined := deviceID + salt
+	// Try Docker container ID.
+	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if !strings.Contains(line, "docker") {
+				continue
+			}
+			parts := strings.Split(line, "/")
+			if len(parts) == 0 {
+				continue
+			}
+			id := parts[len(parts)-1]
+			if len(id) > 12 {
+				id = id[:12]
+			}
+			return id, true
+		}
+	}
 
-	// Derive 32-byte key using SHA256
-	hash := sha256.Sum256([]byte(combined))
-	return hash[:], nil
+	// Fallback to MAC address.
+	if data, err := os.ReadFile("/sys/class/net/eth0/address"); err == nil {
+		mac := strings.TrimSpace(string(data))
+		if mac != "" {
+			return mac, true
+		}
+	}
+
+	return "", false
+}
+
+// deviceIDDarwin reads the Hardware UUID, then the IOPlatformSerialNumber.
+func deviceIDDarwin() (string, bool) {
+	if out, err := exec.Command("system_profiler", "SPHardwareDataType").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "Hardware UUID:") {
+				parts := strings.Split(line, ":")
+				if len(parts) > 1 {
+					return strings.TrimSpace(parts[1]), true
+				}
+			}
+		}
+	}
+
+	if out, err := exec.Command("ioreg", "-l").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "IOPlatformSerialNumber") {
+				parts := strings.Split(line, "=")
+				if len(parts) > 1 {
+					return strings.Trim(strings.TrimSpace(parts[1]), `"`), true
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+// deviceIDWindows reads the ComputerSystemProduct UUID via wmic, then
+// falls back to the MachineGuid registry value.
+func deviceIDWindows() (string, bool) {
+	if out, err := exec.Command("wmic", "csproduct", "get", "UUID").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || line == "UUID" || strings.Contains(line, "UUID") {
+				continue
+			}
+			return line, true
+		}
+	}
+
+	if out, err := exec.Command("cmd", "/c", "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid").Output(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if !strings.Contains(line, "MachineGuid") {
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) > 2 {
+				return parts[len(parts)-1], true
+			}
+		}
+	}
+
+	return "", false
+}
+
+// deviceIDFallback returns hostname[-user] for uniqueness when no
+// platform-specific ID was available. Returns false only if the hostname
+// lookup itself fails.
+func deviceIDFallback() (string, bool) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return "", false
+	}
+	if user := os.Getenv("USER"); user != "" {
+		return hostname + "-" + user, true
+	}
+	if user := os.Getenv("USERNAME"); user != "" {
+		return hostname + "-" + user, true
+	}
+	return hostname, true
 }
 
 // EncryptString encrypts an arbitrary string using the device-specific key
@@ -220,14 +236,4 @@ func DecryptCredentials(encrypted string) (accessKey, secretKey string, err erro
 		return "", "", fmt.Errorf("invalid credential format")
 	}
 	return parts[0], parts[1], nil
-}
-
-// SecureWipe overwrites sensitive data in memory
-// Currently unused but kept for future security operations
-//
-//nolint:unused
-func SecureWipe(data []byte) {
-	for i := range data {
-		data[i] = 0
-	}
 }

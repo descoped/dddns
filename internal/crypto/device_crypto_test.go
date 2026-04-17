@@ -150,35 +150,6 @@ func TestDecryptInvalidData(t *testing.T) {
 	}
 }
 
-func TestSecureWipe(t *testing.T) {
-	// Test that SecureWipe clears sensitive data
-	sensitiveData := []byte("sensitive-password-12345")
-	originalLen := len(sensitiveData)
-
-	// Make a copy to verify original was modified
-	dataCopy := make([]byte, len(sensitiveData))
-	copy(dataCopy, sensitiveData)
-
-	crypto.SecureWipe(sensitiveData)
-
-	// Length should remain the same
-	if len(sensitiveData) != originalLen {
-		t.Error("SecureWipe should not change slice length")
-	}
-
-	// All bytes should be zero
-	for i, b := range sensitiveData {
-		if b != 0 {
-			t.Errorf("Byte at position %d not wiped: %v", i, b)
-		}
-	}
-
-	// Should not equal original data
-	if string(sensitiveData) == string(dataCopy) {
-		t.Error("SecureWipe failed to clear data")
-	}
-}
-
 func TestDeviceKeyFallback(t *testing.T) {
 	// Test that GetDeviceKey falls back to hostname when device ID not available
 	// This test mainly ensures no panic/crash in fallback scenarios

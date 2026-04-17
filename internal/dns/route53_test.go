@@ -113,30 +113,9 @@ func TestRoute53Client_UpdateIP(t *testing.T) {
 		ttl:          300,
 	}
 
-	err := client.UpdateIP(context.Background(), "5.6.7.8", false)
+	err := client.UpdateIP(context.Background(), "5.6.7.8")
 	if err != nil {
 		t.Fatalf("UpdateIP failed: %v", err)
-	}
-}
-
-func TestRoute53Client_UpdateIP_DryRun(t *testing.T) {
-	mockClient := &mockRoute53Client{
-		changeResourceRecordSetsFunc: func(ctx context.Context, params *route53.ChangeResourceRecordSetsInput, optFns ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error) {
-			t.Fatal("ChangeResourceRecordSets should not be called in dry run mode")
-			return nil, nil
-		},
-	}
-
-	client := &Route53Client{
-		client:       mockClient,
-		hostedZoneID: "Z123456",
-		hostname:     "test.example.com",
-		ttl:          300,
-	}
-
-	err := client.UpdateIP(context.Background(), "5.6.7.8", true)
-	if err != nil {
-		t.Fatalf("UpdateIP dry run failed: %v", err)
 	}
 }
 
@@ -169,7 +148,7 @@ func TestRoute53Client_UpdateIP_EmptyHostname(t *testing.T) {
 		ttl:          300,
 	}
 	// Must not panic.
-	_ = client.UpdateIP(context.Background(), "1.2.3.4", false)
+	_ = client.UpdateIP(context.Background(), "1.2.3.4")
 }
 
 // TestRoute53Client_AlreadyDottedHostname verifies that a hostname that
@@ -220,7 +199,7 @@ func TestRoute53Client_UpdateIP_Error(t *testing.T) {
 		ttl:          300,
 	}
 
-	err := client.UpdateIP(context.Background(), "5.6.7.8", false)
+	err := client.UpdateIP(context.Background(), "5.6.7.8")
 	if err == nil {
 		t.Error("Expected error from AWS update, got nil")
 	}

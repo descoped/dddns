@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/descoped/dddns/internal/commands/myip"
 	"github.com/spf13/cobra"
@@ -21,7 +23,9 @@ func init() {
 
 // runIP retrieves and displays the current public IP address.
 func runIP(cmd *cobra.Command, _ []string) error {
-	ip, err := myip.GetPublicIP()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ip, err := myip.GetPublicIP(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get public IP: %w", err)
 	}

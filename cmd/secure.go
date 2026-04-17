@@ -45,8 +45,11 @@ func runEnableSecure(_ *cobra.Command, _ []string) error {
 	configPath := cfgFile
 	if configPath == "" {
 		// Use profile system for consistent path resolution
-		profile.Init()
-		configPath = profile.Current.GetConfigPath()
+		resolved, err := profile.Detect().GetConfigPath()
+		if err != nil {
+			return fmt.Errorf("resolve config path: %w", err)
+		}
+		configPath = resolved
 	}
 
 	// Generate secure path
@@ -120,8 +123,7 @@ func runTestSecure(_ *cobra.Command, _ []string) error {
 	fmt.Println()
 
 	// Show device info sources
-	profile.Init()
-	p := profile.Current
+	p := profile.Detect()
 	fmt.Printf("Device profile: %s\n", p.Name)
 	fmt.Println("Device identifiers checked:")
 

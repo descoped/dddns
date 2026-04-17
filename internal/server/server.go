@@ -15,8 +15,8 @@ import (
 // are constructed in NewServer; Run blocks until the provided context
 // is cancelled, then shuts down gracefully.
 type Server struct {
-	http   *http.Server
-	binder func() error // set in Run; allows tests to swap in an httptest listener
+	http           *http.Server
+	listenAndServe func() error // set in NewServer; tests swap in an httptest listener
 }
 
 // NewServer wires the handler chain from a validated Config. Both
@@ -50,8 +50,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		IdleTimeout:       30 * time.Second,
 	}
 	return &Server{
-		http:   httpSrv,
-		binder: func() error { return httpSrv.ListenAndServe() },
+		http:           httpSrv,
+		listenAndServe: func() error { return httpSrv.ListenAndServe() },
 	}, nil
 }
 
@@ -61,7 +61,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- s.binder()
+		errCh <- s.listenAndServe()
 	}()
 
 	select {

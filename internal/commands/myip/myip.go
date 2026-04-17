@@ -1,6 +1,7 @@
 package myip
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -15,9 +16,14 @@ var httpClient = &http.Client{
 }
 
 // GetPublicIP retrieves the public IP for current network from checkip.amazonaws.com
-// and validates that it's a usable public IPv4 address.
-func GetPublicIP() (string, error) {
-	resp, err := httpClient.Get("https://checkip.amazonaws.com")
+// and validates that it's a usable public IPv4 address. The provided ctx
+// bounds the HTTP call so a SIGTERM cancels it immediately.
+func GetPublicIP(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://checkip.amazonaws.com", nil)
+	if err != nil {
+		return "", fmt.Errorf("build public ip request: %w", err)
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http get public ip error: %w", err)
 	}

@@ -69,12 +69,15 @@ func initConfig() {
 			viper.SetConfigType("yaml") // Set type to avoid "unsupported" error
 		}
 	} else {
-		// Initialize profile system
-		profile.Init()
-		p := profile.Current
+		// Detect active deployment profile.
+		p := profile.Detect()
 
 		// Check for secure config first (prefer encrypted over plaintext)
-		securePath := p.GetSecurePath()
+		securePath, err := p.GetSecurePath()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "Error resolving secure config path: %v\n", err)
+			os.Exit(1)
+		}
 		if _, err := os.Stat(securePath); err == nil {
 			// Found secure config, use it
 			cfgFile = securePath
@@ -82,7 +85,12 @@ func initConfig() {
 			viper.SetConfigType("yaml")
 		} else {
 			// Fall back to regular config search
-			viper.AddConfigPath(p.GetDataDir())
+			dataDir, err := p.GetDataDir()
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "Error resolving data directory: %v\n", err)
+				os.Exit(1)
+			}
+			viper.AddConfigPath(dataDir)
 			viper.SetConfigName("config")
 			viper.SetConfigType("yaml")
 		}

@@ -1,6 +1,7 @@
 package myip_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func TestGetPublicIP(t *testing.T) {
-	ip, err := myip.GetPublicIP()
+	ip, err := myip.GetPublicIP(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get public IP: %v", err)
 	}

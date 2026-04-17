@@ -49,12 +49,11 @@ type Config struct {
 // The encrypted equivalent of SharedSecret lives in a sibling struct in
 // secure_config.go so the two wire formats stay explicit.
 type ServerConfig struct {
-	Bind          string   `mapstructure:"bind"           yaml:"bind"`
-	SharedSecret  string   `mapstructure:"shared_secret"  yaml:"shared_secret,omitempty"`
-	AllowedCIDRs  []string `mapstructure:"allowed_cidrs"  yaml:"allowed_cidrs"`
-	AuditLog      string   `mapstructure:"audit_log"      yaml:"audit_log,omitempty"`
-	OnAuthFailure string   `mapstructure:"on_auth_failure" yaml:"on_auth_failure,omitempty"`
-	WANInterface  string   `mapstructure:"wan_interface"  yaml:"wan_interface,omitempty"`
+	Bind         string   `mapstructure:"bind"           yaml:"bind"`
+	SharedSecret string   `mapstructure:"shared_secret"  yaml:"shared_secret,omitempty"`
+	AllowedCIDRs []string `mapstructure:"allowed_cidrs"  yaml:"allowed_cidrs"`
+	AuditLog     string   `mapstructure:"audit_log"      yaml:"audit_log,omitempty"`
+	WANInterface string   `mapstructure:"wan_interface"  yaml:"wan_interface,omitempty"`
 }
 
 // Validate reports whether the server block is well-formed. It is called
@@ -95,14 +94,18 @@ func Load() (*Config, error) {
 		return LoadSecure(configFile)
 	}
 
-	// Initialize profile system
-	profile.Init()
+	// Detect active profile for default path resolution.
+	p := profile.Detect()
+	cachePath, err := p.GetCachePath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve cache path: %w", err)
+	}
 
 	cfg := &Config{
 		// Default values
 		AWSRegion:   "us-east-1",
 		TTL:         300,
-		IPCacheFile: profile.Current.GetCachePath(),
+		IPCacheFile: cachePath,
 		ForceUpdate: false,
 		DryRun:      false,
 	}
@@ -170,35 +173,65 @@ func SavePlaintext(cfg *Config, path string) error {
 	return nil
 }
 
-// CreateDefault creates a default configuration file
-func CreateDefault(path string) error {
-	defaultConfig := `# dddns Configuration
+// defaultConfigTemplate is the single source of truth for the commented
+// YAML emitted by both `dddns config init` (non-interactive) and the
+// interactive wizard. The %s placeholders (in order) are: AWS region,
+// AWS access key, AWS secret key, hosted zone ID, hostname, TTL, and
+// the IP cache file path.
+const defaultConfigTemplate = `# dddns Configuration
 # AWS Settings (REQUIRED - no env vars allowed for security)
-aws_region: "us-east-1"  # AWS region
-aws_access_key: ""       # REQUIRED: Your AWS Access Key
-aws_secret_key: ""       # REQUIRED: Your AWS Secret Key
+aws_region: "%s"           # AWS region
+aws_access_key: "%s"       # REQUIRED: Your AWS Access Key
+aws_secret_key: "%s"       # REQUIRED: Your AWS Secret Key
 
 # DNS Settings (required)
-hosted_zone_id: ""       # Your Route53 Hosted Zone ID
-hostname: ""             # Domain name to update (e.g., home.example.com)
-ttl: 300                 # TTL in seconds
+hosted_zone_id: "%s"       # Your Route53 Hosted Zone ID
+hostname: "%s"             # Domain name to update (e.g., home.example.com)
+ttl: %d                    # TTL in seconds
 
 # Operational Settings
-ip_cache_file: "%s"  # Where to store last known IP
+ip_cache_file: "%s"        # Where to store last known IP
 `
 
+// FormatConfigYAML renders cfg into the canonical commented YAML used by
+// `dddns config init`. It never inspects or validates the config — callers
+// are expected to call Config.Validate first when interactive input might
+// have left required fields blank.
+func FormatConfigYAML(cfg *Config) string {
+	return fmt.Sprintf(
+		defaultConfigTemplate,
+		cfg.AWSRegion,
+		cfg.AWSAccessKey,
+		cfg.AWSSecretKey,
+		cfg.HostedZoneID,
+		cfg.Hostname,
+		cfg.TTL,
+		cfg.IPCacheFile,
+	)
+}
+
+// CreateDefault creates a default configuration file.
+func CreateDefault(path string) error {
 	// Create directory if needed
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, constants.ConfigDirPerm); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// Format template with proper cache path
-	profile.Init()
-	formattedConfig := fmt.Sprintf(defaultConfig, profile.Current.GetCachePath())
+	p := profile.Detect()
+	cachePath, err := p.GetCachePath()
+	if err != nil {
+		return fmt.Errorf("resolve cache path: %w", err)
+	}
+
+	content := FormatConfigYAML(&Config{
+		AWSRegion:   "us-east-1",
+		TTL:         300,
+		IPCacheFile: cachePath,
+	})
 
 	// Write config file
-	if err := os.WriteFile(path, []byte(formattedConfig), constants.ConfigFilePerm); err != nil {
+	if err := os.WriteFile(path, []byte(content), constants.ConfigFilePerm); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

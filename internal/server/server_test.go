@@ -132,7 +132,7 @@ func TestServer_Run_GracefulShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := ln.Addr().String()
-	srv.binder = func() error { return srv.http.Serve(ln) }
+	srv.listenAndServe = func() error { return srv.http.Serve(ln) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

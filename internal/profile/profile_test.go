@@ -14,7 +14,7 @@ func TestProfileDetection(t *testing.T) {
 		skipOS   string
 	}{
 		{
-			name:     "Docker Detection",
+			name: "Docker Detection",
 			expected: func() string {
 				// Check if running in Docker
 				if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -78,12 +78,18 @@ func TestAllProfilePaths(t *testing.T) {
 	for name, profile := range profiles {
 		t.Run(name, func(t *testing.T) {
 			// Test that all path methods return non-empty strings
-			dataDir := profile.GetDataDir()
+			dataDir, err := profile.GetDataDir()
+			if err != nil {
+				t.Fatalf("%s.GetDataDir() error: %v", name, err)
+			}
 			if dataDir == "" {
 				t.Errorf("%s.GetDataDir() returned empty string", name)
 			}
 
-			configPath := profile.GetConfigPath()
+			configPath, err := profile.GetConfigPath()
+			if err != nil {
+				t.Fatalf("%s.GetConfigPath() error: %v", name, err)
+			}
 			if configPath == "" {
 				t.Errorf("%s.GetConfigPath() returned empty string", name)
 			}
@@ -91,7 +97,10 @@ func TestAllProfilePaths(t *testing.T) {
 				t.Errorf("%s.GetConfigPath() = %v, should end with config.yaml", name, configPath)
 			}
 
-			securePath := profile.GetSecurePath()
+			securePath, err := profile.GetSecurePath()
+			if err != nil {
+				t.Fatalf("%s.GetSecurePath() error: %v", name, err)
+			}
 			if securePath == "" {
 				t.Errorf("%s.GetSecurePath() returned empty string", name)
 			}
@@ -99,7 +108,10 @@ func TestAllProfilePaths(t *testing.T) {
 				t.Errorf("%s.GetSecurePath() = %v, should end with config.secure", name, securePath)
 			}
 
-			cachePath := profile.GetCachePath()
+			cachePath, err := profile.GetCachePath()
+			if err != nil {
+				t.Fatalf("%s.GetCachePath() error: %v", name, err)
+			}
 			if cachePath == "" {
 				t.Errorf("%s.GetCachePath() returned empty string", name)
 			}
@@ -132,24 +144,5 @@ func TestSecureConfigSupport(t *testing.T) {
 				t.Logf("%s uses command-based device ID retrieval", name)
 			}
 		})
-	}
-}
-
-func TestProfileInit(t *testing.T) {
-	// Test that Init() works without panicking
-	Init()
-
-	if Current == nil {
-		t.Fatal("Init() should set Current profile")
-	}
-
-	t.Logf("Current profile after Init(): %s", Current.Name)
-
-	// Test that calling Init() multiple times is safe
-	firstCurrent := Current
-	Init()
-
-	if Current != firstCurrent {
-		t.Error("Init() should not change Current if already set")
 	}
 }

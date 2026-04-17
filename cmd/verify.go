@@ -3,14 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
-	"net"
-	"strings"
 	"time"
 
-	"github.com/descoped/dddns/internal/commands/myip"
 	"github.com/descoped/dddns/internal/config"
-	"github.com/descoped/dddns/internal/dns"
+	"github.com/descoped/dddns/internal/verify"
 	"github.com/spf13/cobra"
 )
 
@@ -26,43 +22,8 @@ func init() {
 	rootCmd.AddCommand(verifyCmd)
 }
 
-// checkDNSServer queries a specific DNS server for the hostname and compares with expected IP.
-// It prints the result with visual indicators for match/mismatch.
-func checkDNSServer(hostname, server, expectedIP string) {
-	r := &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{
-				Timeout: time.Second * 2,
-			}
-			return d.DialContext(ctx, network, server)
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	ips, err := r.LookupIPAddr(ctx, hostname)
-	if err != nil {
-		fmt.Printf("FAILED\n")
-	} else if len(ips) == 0 {
-		fmt.Printf("NO RECORD\n")
-	} else {
-		ip := ips[0].IP.String()
-		fmt.Printf("%s", ip)
-		if ip == expectedIP {
-			fmt.Printf(" ✓\n")
-		} else {
-			fmt.Printf(" ✗\n")
-		}
-	}
-}
-
-// runVerify performs DNS verification:
-// 1. Gets current public IP
-// 2. Queries Route53 for current DNS record
-// 3. Tests resolution from multiple DNS servers
-// 4. Reports propagation status
+// runVerify performs DNS verification by delegating to verify.Run and
+// formatting the resulting Report for stdout.
 func runVerify(_ *cobra.Command, _ []string) error {
 	// Load configuration
 	cfg, err := config.Load()
@@ -75,88 +36,78 @@ func runVerify(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	report, err := verify.Run(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("=== DNS Verification ===")
 	fmt.Println()
 
-	// 1. Get current public IP
-	currentIP, err := myip.GetPublicIP()
-	if err != nil {
-		return fmt.Errorf("failed to get public IP: %w", err)
-	}
-	currentIP = strings.TrimSpace(currentIP)
-	fmt.Printf("Your public IP:     %s\n", currentIP)
+	// 1. Public IP.
+	fmt.Printf("Your public IP:     %s\n", report.PublicIP)
 
-	// 2. Check Route53 record
-	r53Client, err := dns.NewRoute53Client(cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
-	if err != nil {
-		return fmt.Errorf("failed to create Route53 client: %w", err)
-	}
-
-	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer verifyCancel()
-	route53IP, err := r53Client.GetCurrentIP(verifyCtx)
-	if err != nil {
-		log.Printf("Route53 record:     NOT FOUND (%v)", err)
+	// 2. Route53.
+	if report.Route53Error != nil {
+		fmt.Printf("Route53 record:     NOT FOUND (%v)\n", report.Route53Error)
 	} else {
-		fmt.Printf("Route53 record:     %s", route53IP)
-		if route53IP == currentIP {
+		fmt.Printf("Route53 record:     %s", report.Route53IP)
+		if report.Route53IP == report.PublicIP {
 			fmt.Printf(" ✓\n")
 		} else {
 			fmt.Printf(" ✗ (mismatch)\n")
 		}
 	}
 
-	// 3. Check public DNS resolution
+	// 3. Stdlib DNS resolver.
 	fmt.Printf("Public DNS lookup:  ")
-	ips, err := net.LookupIP(cfg.Hostname)
-	if err != nil {
-		fmt.Printf("FAILED (%v)\n", err)
-	} else {
-		foundIP := ""
-		for _, ip := range ips {
-			if ip.To4() != nil { // IPv4 only
-				foundIP = ip.String()
-				break
-			}
-		}
-		if foundIP == "" {
-			fmt.Printf("NO A RECORD\n")
+	switch {
+	case report.StdlibError != nil:
+		fmt.Printf("FAILED (%v)\n", report.StdlibError)
+	case report.StdlibIP == "":
+		fmt.Printf("NO A RECORD\n")
+	default:
+		fmt.Printf("%s", report.StdlibIP)
+		if report.StdlibIP == report.PublicIP {
+			fmt.Printf(" ✓\n")
 		} else {
-			fmt.Printf("%s", foundIP)
-			if foundIP == currentIP {
-				fmt.Printf(" ✓\n")
-			} else {
-				fmt.Printf(" ✗ (mismatch)\n")
-			}
+			fmt.Printf(" ✗ (mismatch)\n")
 		}
 	}
 
-	// 4. Check multiple DNS servers
+	// 4. Named resolvers.
 	fmt.Println()
 	fmt.Println("DNS Server Checks:")
-	dnsServers := map[string]string{
-		"Google":     "8.8.8.8:53",
-		"Cloudflare": "1.1.1.1:53",
-		"Quad9":      "9.9.9.9:53",
+	for _, r := range report.Resolvers {
+		fmt.Printf("  %s: ", r.Name)
+		switch {
+		case r.Error != nil:
+			fmt.Printf("FAILED\n")
+		case r.IP == "":
+			fmt.Printf("NO RECORD\n")
+		default:
+			fmt.Printf("%s", r.IP)
+			if r.IP == report.PublicIP {
+				fmt.Printf(" ✓\n")
+			} else {
+				fmt.Printf(" ✗\n")
+			}
+		}
 	}
 
-	for name, server := range dnsServers {
-		fmt.Printf("  %s: ", name)
-
-		// Extract DNS check to avoid defer in loop
-		checkDNSServer(cfg.Hostname, server, currentIP)
-	}
-
-	// Summary
+	// Summary.
 	fmt.Println()
 	fmt.Println("=== Summary ===")
-	switch route53IP {
-	case currentIP:
-		fmt.Println("✓ Route53 record is up to date")
-	case "":
+	switch {
+	case report.Route53Error != nil || report.Route53IP == "":
 		fmt.Println("⚠ No Route53 record found - run 'dddns update' to create it")
+	case report.Route53IP == report.PublicIP:
+		fmt.Println("✓ Route53 record is up to date")
 	default:
-		fmt.Printf("✗ Route53 record (%s) doesn't match current IP (%s)\n", route53IP, currentIP)
+		fmt.Printf("✗ Route53 record (%s) doesn't match current IP (%s)\n", report.Route53IP, report.PublicIP)
 		fmt.Println("  Run 'dddns update' to fix this")
 	}
 

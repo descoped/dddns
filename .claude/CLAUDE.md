@@ -114,7 +114,6 @@ dddns serve test                     # Loopback Basic-Auth'd test request
 
 # Security
 dddns secure enable       # Convert to encrypted config
-dddns secure disable      # Revert to plain config
 dddns secure test         # Test encryption
 ```
 

@@ -33,12 +33,11 @@ type SecureConfig struct {
 // SecureServerConfig is the at-rest form of ServerConfig with the shared
 // secret replaced by a device-encrypted vault.
 type SecureServerConfig struct {
-	Bind          string   `yaml:"bind"`
-	SecretVault   string   `yaml:"secret_vault"`
-	AllowedCIDRs  []string `yaml:"allowed_cidrs"`
-	AuditLog      string   `yaml:"audit_log,omitempty"`
-	OnAuthFailure string   `yaml:"on_auth_failure,omitempty"`
-	WANInterface  string   `yaml:"wan_interface,omitempty"`
+	Bind         string   `yaml:"bind"`
+	SecretVault  string   `yaml:"secret_vault"`
+	AllowedCIDRs []string `yaml:"allowed_cidrs"`
+	AuditLog     string   `yaml:"audit_log,omitempty"`
+	WANInterface string   `yaml:"wan_interface,omitempty"`
 }
 
 // SaveSecure saves config with encrypted credentials
@@ -67,12 +66,11 @@ func SaveSecure(cfg *Config, path string) error {
 			return fmt.Errorf("failed to encrypt server.shared_secret: %w", err)
 		}
 		secureCfg.Server = &SecureServerConfig{
-			Bind:          cfg.Server.Bind,
-			SecretVault:   secretVault,
-			AllowedCIDRs:  cfg.Server.AllowedCIDRs,
-			AuditLog:      cfg.Server.AuditLog,
-			OnAuthFailure: cfg.Server.OnAuthFailure,
-			WANInterface:  cfg.Server.WANInterface,
+			Bind:         cfg.Server.Bind,
+			SecretVault:  secretVault,
+			AllowedCIDRs: cfg.Server.AllowedCIDRs,
+			AuditLog:     cfg.Server.AuditLog,
+			WANInterface: cfg.Server.WANInterface,
 		}
 	}
 
@@ -146,12 +144,11 @@ func LoadSecure(path string) (*Config, error) {
 			return nil, fmt.Errorf("failed to decrypt server.secret_vault: %w", err)
 		}
 		serverCfg = &ServerConfig{
-			Bind:          secureCfg.Server.Bind,
-			SharedSecret:  sharedSecret,
-			AllowedCIDRs:  secureCfg.Server.AllowedCIDRs,
-			AuditLog:      secureCfg.Server.AuditLog,
-			OnAuthFailure: secureCfg.Server.OnAuthFailure,
-			WANInterface:  secureCfg.Server.WANInterface,
+			Bind:         secureCfg.Server.Bind,
+			SharedSecret: sharedSecret,
+			AllowedCIDRs: secureCfg.Server.AllowedCIDRs,
+			AuditLog:     secureCfg.Server.AuditLog,
+			WANInterface: secureCfg.Server.WANInterface,
 		}
 	}
 
@@ -182,14 +179,22 @@ func MigrateToSecure(plaintextPath, securePath string) error {
 		return fmt.Errorf("failed to save secure config: %w", err)
 	}
 
-	// Securely wipe plaintext file
-	info, _ := os.Stat(plaintextPath)
-	if info != nil {
-		// Overwrite with zeros
+	// Securely wipe plaintext file. Failures here are critical: a silently
+	// failed zero-overwrite would leave plaintext AWS credentials on disk.
+	info, err := os.Stat(plaintextPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("stat plaintext before wipe: %w", err)
+	}
+	if err == nil {
+		// Overwrite with zeros.
 		zeros := make([]byte, info.Size())
-		_ = os.WriteFile(plaintextPath, zeros, constants.ConfigFilePerm)
-		// Remove file
-		_ = os.Remove(plaintextPath)
+		if err := os.WriteFile(plaintextPath, zeros, constants.ConfigFilePerm); err != nil {
+			return fmt.Errorf("overwrite plaintext before removal: %w", err)
+		}
+		// Remove file.
+		if err := os.Remove(plaintextPath); err != nil {
+			return fmt.Errorf("remove plaintext: %w", err)
+		}
 	}
 
 	fmt.Printf("✓ Migrated config to secure storage at %s\n", securePath)

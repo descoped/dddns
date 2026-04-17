@@ -26,12 +26,11 @@ func TestSaveLoadSecure_WithServerBlock(t *testing.T) {
 		IPCacheFile:  filepath.Join(tmpDir, "cache.txt"),
 		IPSource:     "local",
 		Server: &config.ServerConfig{
-			Bind:          "127.0.0.1:53353",
-			SharedSecret:  "super-secret-value",
-			AllowedCIDRs:  []string{"127.0.0.0/8", "192.168.1.0/24"},
-			AuditLog:      "/var/log/dddns-audit.log",
-			OnAuthFailure: "logger",
-			WANInterface:  "eth8",
+			Bind:         "127.0.0.1:53353",
+			SharedSecret: "super-secret-value",
+			AllowedCIDRs: []string{"127.0.0.0/8", "192.168.1.0/24"},
+			AuditLog:     "/var/log/dddns-audit.log",
+			WANInterface: "eth8",
 		},
 	}
 

@@ -103,7 +103,7 @@ func (f *fakeDNSClient) GetCurrentIP(_ context.Context) (string, error) {
 	return f.getIP, f.getErr
 }
 
-func (f *fakeDNSClient) UpdateIP(_ context.Context, newIP string, _ bool) error {
+func (f *fakeDNSClient) UpdateIP(_ context.Context, newIP string) error {
 	f.updateCalled = true
 	f.updateIP = newIP
 	return f.updateErr
@@ -117,7 +117,7 @@ func (blockingDNSClient) GetCurrentIP(ctx context.Context) (string, error) {
 	return "", ctx.Err()
 }
 
-func (blockingDNSClient) UpdateIP(ctx context.Context, _ string, _ bool) error {
+func (blockingDNSClient) UpdateIP(ctx context.Context, _ string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
@@ -245,36 +245,40 @@ func TestUpdate_DryRun(t *testing.T) {
 	}
 }
 
-// --- resolveIP dispatch tests ---
+// --- resolver.resolveIP dispatch tests ---
 
-// mockIPResolution swaps the package-level dispatch hooks for the
-// duration of the test. Any argument may be nil to keep the production
-// hook in place (not recommended — tests shouldn't hit the network).
-func mockIPResolution(t *testing.T, localFn func(string) (string, error), remoteFn func() (string, error), profileName string) {
+// newTestResolver builds a resolver whose hooks are explicit stubs.
+// Passing nil for localFn / remoteFn will t.Fatal if the corresponding
+// branch is taken — a guard against accidentally hitting the network.
+func newTestResolver(t *testing.T, localFn func(string) (string, error), remoteFn func(context.Context) (string, error), profileName string) *resolver {
 	t.Helper()
-	origLocal, origRemote, origProfile := resolveLocalIP, resolveRemoteIP, activeProfile
-	t.Cleanup(func() {
-		resolveLocalIP = origLocal
-		resolveRemoteIP = origRemote
-		activeProfile = origProfile
-	})
-	if localFn != nil {
-		resolveLocalIP = localFn
+	if localFn == nil {
+		localFn = func(string) (string, error) {
+			t.Fatal("local resolver should not be called")
+			return "", nil
+		}
 	}
-	if remoteFn != nil {
-		resolveRemoteIP = remoteFn
+	if remoteFn == nil {
+		remoteFn = func(context.Context) (string, error) {
+			t.Fatal("remote resolver should not be called")
+			return "", nil
+		}
 	}
-	activeProfile = func() string { return profileName }
+	return &resolver{
+		localIP:  localFn,
+		remoteIP: remoteFn,
+		profile:  func() string { return profileName },
+	}
 }
 
 func TestResolveIP_ExplicitLocal(t *testing.T) {
 	var captured string
-	mockIPResolution(t,
+	res := newTestResolver(t,
 		func(iface string) (string, error) { captured = iface; return "1.2.3.4", nil },
-		func() (string, error) { t.Fatal("remote should not be called"); return "", nil },
+		nil,
 		"linux")
 
-	ip, err := resolveIP(&config.Config{
+	ip, err := res.resolveIP(context.Background(), &config.Config{
 		IPSource: "local",
 		Server:   &config.ServerConfig{WANInterface: "eth8"},
 	})
@@ -290,12 +294,12 @@ func TestResolveIP_ExplicitLocal(t *testing.T) {
 }
 
 func TestResolveIP_ExplicitRemote(t *testing.T) {
-	mockIPResolution(t,
-		func(string) (string, error) { t.Fatal("local should not be called"); return "", nil },
-		func() (string, error) { return "5.6.7.8", nil },
+	res := newTestResolver(t,
+		nil,
+		func(context.Context) (string, error) { return "5.6.7.8", nil },
 		"udm") // even on UDM, explicit remote overrides the default
 
-	ip, err := resolveIP(&config.Config{IPSource: "remote"})
+	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: "remote"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,17 +309,17 @@ func TestResolveIP_ExplicitRemote(t *testing.T) {
 }
 
 func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
-	mockIPResolution(t,
+	res := newTestResolver(t,
 		func(iface string) (string, error) {
 			if iface != "" {
 				t.Errorf("expected empty iface for auto-detect, got %q", iface)
 			}
 			return "81.191.174.72", nil
 		},
-		func() (string, error) { t.Fatal("remote should not be called on UDM auto"); return "", nil },
+		nil,
 		"udm")
 
-	ip, err := resolveIP(&config.Config{IPSource: ""})
+	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,12 +329,12 @@ func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
 }
 
 func TestResolveIP_AutoOffUDM_PicksRemote(t *testing.T) {
-	mockIPResolution(t,
-		func(string) (string, error) { t.Fatal("local should not be called on non-UDM auto"); return "", nil },
-		func() (string, error) { return "5.6.7.8", nil },
+	res := newTestResolver(t,
+		nil,
+		func(context.Context) (string, error) { return "5.6.7.8", nil },
 		"macos")
 
-	ip, err := resolveIP(&config.Config{IPSource: "auto"})
+	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: "auto"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,12 +344,12 @@ func TestResolveIP_AutoOffUDM_PicksRemote(t *testing.T) {
 }
 
 func TestResolveIP_InvalidSource(t *testing.T) {
-	mockIPResolution(t,
+	res := newTestResolver(t,
 		func(string) (string, error) { return "", nil },
-		func() (string, error) { return "", nil },
+		func(context.Context) (string, error) { return "", nil },
 		"linux")
 
-	if _, err := resolveIP(&config.Config{IPSource: "bogus"}); err == nil {
+	if _, err := res.resolveIP(context.Background(), &config.Config{IPSource: "bogus"}); err == nil {
 		t.Error("expected error for invalid ip_source")
 	}
 }

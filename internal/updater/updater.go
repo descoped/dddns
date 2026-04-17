@@ -20,33 +20,40 @@ import (
 	"github.com/descoped/dddns/internal/wanip"
 )
 
-// Hooks for the IP-source dispatch. Exposed as package variables so tests
-// can swap in deterministic implementations without touching the OS or
-// network. Not part of the public API.
-var (
-	resolveLocalIP = func(iface string) (string, error) {
-		ip, err := wanip.FromInterface(iface)
-		if err != nil {
-			return "", err
-		}
-		return ip.String(), nil
+// resolver bundles the IP-source lookup seams. Production code constructs
+// a defaultResolver; tests use updateWithResolver to swap any of the three
+// hooks with a deterministic stub.
+type resolver struct {
+	localIP  func(iface string) (string, error)
+	remoteIP func(ctx context.Context) (string, error)
+	profile  func() string
+}
+
+// defaultResolver returns the resolver wired to real OS/network/profile
+// calls. Callers that need to avoid the network must build their own.
+func defaultResolver() *resolver {
+	return &resolver{
+		localIP: func(iface string) (string, error) {
+			ip, err := wanip.FromInterface(iface)
+			if err != nil {
+				return "", err
+			}
+			return ip.String(), nil
+		},
+		remoteIP: myip.GetPublicIP,
+		profile: func() string {
+			return profile.Detect().Name
+		},
 	}
-	resolveRemoteIP = myip.GetPublicIP
-	activeProfile   = func() string {
-		if profile.Current != nil {
-			return profile.Current.Name
-		}
-		return ""
-	}
-)
+}
 
 // resolveIP picks between the local WAN interface and a remote lookup
 // based on cfg.IPSource. Empty / "auto" defaults to local on the UDM
 // profile, remote elsewhere.
-func resolveIP(cfg *config.Config) (string, error) {
+func (r *resolver) resolveIP(ctx context.Context, cfg *config.Config) (string, error) {
 	source := cfg.IPSource
 	if source == "" || source == "auto" {
-		if activeProfile() == "udm" {
+		if r.profile() == "udm" {
 			source = "local"
 		} else {
 			source = "remote"
@@ -58,9 +65,9 @@ func resolveIP(cfg *config.Config) (string, error) {
 		if cfg.Server != nil {
 			iface = cfg.Server.WANInterface
 		}
-		return resolveLocalIP(iface)
+		return r.localIP(iface)
 	case "remote":
-		return resolveRemoteIP()
+		return r.remoteIP(ctx)
 	default:
 		return "", fmt.Errorf("unknown ip_source %q", source)
 	}
@@ -71,7 +78,7 @@ func resolveIP(cfg *config.Config) (string, error) {
 // a real AWS client. dns.Route53Client satisfies this interface.
 type DNSClient interface {
 	GetCurrentIP(ctx context.Context) (string, error)
-	UpdateIP(ctx context.Context, newIP string, dryRun bool) error
+	UpdateIP(ctx context.Context, newIP string) error
 }
 
 // Options controls a single update run.
@@ -97,6 +104,12 @@ type Result struct {
 // Update performs the full update flow: resolve IP → compare cache →
 // compare DNS → upsert → update cache.
 func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, error) {
+	return updateWithResolver(ctx, cfg, opts, defaultResolver())
+}
+
+// updateWithResolver is the production entry point's core. It is exposed
+// (within-package) so tests can inject a deterministic resolver.
+func updateWithResolver(ctx context.Context, cfg *config.Config, opts Options, res *resolver) (*Result, error) {
 	logInfo := func(format string, args ...interface{}) {
 		if !opts.Quiet {
 			log.Printf(format, args...)
@@ -106,7 +119,7 @@ func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, err
 	// 1. Resolve current IP (override, or dispatch on cfg.IPSource).
 	currentIP := opts.OverrideIP
 	if currentIP == "" {
-		detected, err := resolveIP(cfg)
+		detected, err := res.resolveIP(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get public IP: %w", err)
 		}
@@ -135,7 +148,7 @@ func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, err
 	// 3. Create or use injected DNS client.
 	client := opts.Client
 	if client == nil {
-		r53, err := dns.NewRoute53Client(cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
+		r53, err := dns.NewFromConfig(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Route53 client: %w", err)
 		}
@@ -182,7 +195,7 @@ func Update(ctx context.Context, cfg *config.Config, opts Options) (*Result, err
 
 	// 6. UPSERT.
 	logInfo("Updating %s to %s...", cfg.Hostname, currentIP)
-	if err := client.UpdateIP(ctx, currentIP, false); err != nil {
+	if err := client.UpdateIP(ctx, currentIP); err != nil {
 		return nil, fmt.Errorf("failed to update Route53: %w", err)
 	}
 	log.Printf("Successfully updated %s to %s", cfg.Hostname, currentIP)

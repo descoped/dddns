@@ -10,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
+
+	dddnscfg "github.com/descoped/dddns/internal/config"
 )
 
 // route53API interface for mocking
@@ -28,14 +30,14 @@ type Route53Client struct {
 
 // NewRoute53Client creates a new Route53 client
 // It ONLY uses static credentials from config for security (no env vars or IAM roles)
-func NewRoute53Client(region, accessKey, secretKey, hostedZoneID, hostname string, ttl int64) (*Route53Client, error) {
+func NewRoute53Client(ctx context.Context, region, accessKey, secretKey, hostedZoneID, hostname string, ttl int64) (*Route53Client, error) {
 	// Require explicit credentials for security
 	if accessKey == "" || secretKey == "" {
 		return nil, fmt.Errorf("AWS credentials are required in config file (aws_access_key and aws_secret_key)")
 	}
 
 	// Only use static credentials from config file
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
+	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	)
@@ -54,14 +56,25 @@ func NewRoute53Client(region, accessKey, secretKey, hostedZoneID, hostname strin
 	}, nil
 }
 
+// NewFromConfig constructs a Route53Client from a fully-populated dddns
+// Config. It is the preferred constructor for production code; tests that
+// need to inject a mock HTTP layer should use NewRoute53Client directly.
+func NewFromConfig(ctx context.Context, cfg *dddnscfg.Config) (*Route53Client, error) {
+	return NewRoute53Client(ctx, cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
+}
+
+// fqdn returns the configured hostname in FQDN form (guaranteed trailing dot).
+func (r *Route53Client) fqdn() string {
+	if strings.HasSuffix(r.hostname, ".") {
+		return r.hostname
+	}
+	return r.hostname + "."
+}
+
 // GetCurrentIP retrieves the current IP address for the configured hostname.
 // ctx is honored on the Route53 API call.
 func (r *Route53Client) GetCurrentIP(ctx context.Context) (string, error) {
-	// Ensure hostname ends with a dot for Route53
-	fqdn := r.hostname
-	if !strings.HasSuffix(fqdn, ".") {
-		fqdn = fqdn + "."
-	}
+	fqdn := r.fqdn()
 
 	input := &route53.ListResourceRecordSetsInput{
 		HostedZoneId:    aws.String(r.hostedZoneID),
@@ -88,18 +101,10 @@ func (r *Route53Client) GetCurrentIP(ctx context.Context) (string, error) {
 }
 
 // UpdateIP updates the A record with a new IP address.
-// ctx is honored on the Route53 API call.
-func (r *Route53Client) UpdateIP(ctx context.Context, newIP string, dryRun bool) error {
-	if dryRun {
-		fmt.Printf("[DRY RUN] Would update %s to %s\n", r.hostname, newIP)
-		return nil
-	}
-
-	// Ensure hostname ends with a dot for Route53
-	fqdn := r.hostname
-	if !strings.HasSuffix(fqdn, ".") {
-		fqdn = fqdn + "."
-	}
+// ctx is honored on the Route53 API call. Callers are expected to handle
+// dry-run short-circuits before invoking UpdateIP (see internal/updater).
+func (r *Route53Client) UpdateIP(ctx context.Context, newIP string) error {
+	fqdn := r.fqdn()
 
 	input := &route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: aws.String(r.hostedZoneID),

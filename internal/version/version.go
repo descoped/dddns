@@ -17,11 +17,6 @@ func GetVersion() string {
 	return Version
 }
 
-// GetBuildDate returns the build date
-func GetBuildDate() string {
-	return BuildDate
-}
-
 // GetFullVersion returns version with build date
 func GetFullVersion() string {
 	v := GetVersion()

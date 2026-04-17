@@ -402,10 +402,12 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Findings — significant:** `ip-api.com` free tier does **not** support HTTPS. Every request we've ever made over HTTPS has returned `{"status":"fail","message":"SSL unavailable for this endpoint, order a key at https://members.ip-api.com/"}` and been silently collapsed to "not a proxy" by the old code. In effect, the proxy check has been a no-op in production for the entire lifetime of dddns. After this fix, the check now correctly errors out — which in cron mode means every `dddns update` run will log `Warning: proxy check failed: ip-api.com request failed: SSL unavailable...`. Users can suppress this by setting `skip_proxy_check: true` in config.
 **Follow-up work:** resolved by retiring the entire ip-api.com dependency in the immediately-following commit (see G6 below). The proxy check is now gone, replaced by stdlib-only IP validation.
 
-**0.3. Fail-fast on malformed config.**
-- `cmd/root.go:initConfig` — on `ReadInConfig` errors other than `ConfigFileNotFoundError`, print the error and `os.Exit(1)`. Today it prints to stderr and silently continues, producing a confusing downstream `aws_access_key is required` error for what is actually a YAML syntax problem.
-- Tests: pass malformed YAML; assert non-zero exit and a parse-error message.
-- **Accept:** users see the real root cause of config problems.
+**0.3. Fail-fast on malformed config.** ✅ Completed
+- `cmd/root.go:initConfig` — non-`ConfigFileNotFoundError` errors from `viper.ReadInConfig` now print the underlying message and `os.Exit(1)`. A not-found error is still silently tolerated (first-run scenarios, `dddns config init` on a fresh install).
+- Test added: `TestMalformedConfig` in `tests/integration_test.go` — feeds unterminated-quoted YAML via `--config`, asserts non-zero exit, the message contains `Error reading config file`, and the output does *not* contain the old misleading `aws_access_key is required` downstream symptom.
+
+**Status:** ✅ Complete. Full suite green (89 tests across 10 packages).
+**Findings:** Straightforward fix. No surprises. Behaviour on malformed-but-recoverable configs (e.g. user wants to reinitialise with `dddns config init`) is unchanged only for the not-found path; a syntactically-invalid existing file blocks all commands including `config init` — the user must delete or rename it first. Documented this implicit contract in the code comment.
 
 **0.4. Guard empty hostname in Route53 client.**
 - `internal/dns/route53.go` — replace `fqdn[len(fqdn)-1] != '.'` with `strings.HasSuffix(fqdn, ".")`. Panics-on-empty becomes graceful handling, defense in depth behind `Validate()`.

@@ -140,6 +140,41 @@ ttl: -1`,
 	}
 }
 
+// TestMalformedConfig verifies that a YAML parse error in the config file
+// causes dddns to exit non-zero with a meaningful message, rather than
+// silently falling through to a downstream "aws_access_key is required"
+// error that hides the real cause.
+func TestMalformedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Missing closing quote — yaml.v3 rejects this.
+	malformed := `aws_region: "us-east-1
+aws_access_key: "AKIATEST"
+aws_secret_key: "SECRETTEST"
+hosted_zone_id: "Z123"
+hostname: "test.example.com"
+ttl: 300`
+	if err := os.WriteFile(configPath, []byte(malformed), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("go", "run", "../main.go", "--config", configPath, "update")
+	output, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("expected non-zero exit for malformed YAML, got success\nOutput: %s", output)
+	}
+	if !strings.Contains(string(output), "Error reading config file") {
+		t.Errorf("expected parse error message, got: %s", output)
+	}
+	// The output should NOT claim a missing field — that's the downstream
+	// error we're preventing.
+	if strings.Contains(string(output), "aws_access_key is required") {
+		t.Errorf("malformed YAML surfaced as a field-validation error (the old silent-fail behavior):\n%s", output)
+	}
+}
+
 // TestIPCommand tests the IP detection command
 func TestIPCommand(t *testing.T) {
 	if testing.Short() {

@@ -407,13 +407,6 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - Tests: empty, dotted, undotted hostnames.
 - **Accept:** no panic; behavior identical for non-empty input.
 
-**0.5. Soft-fail proxy check** (relevant only to `ip_source: remote`).
-- `cmd/update.go` — on `IsProxyIP` error, log a warning and proceed rather than aborting the update. Today an ip-api.com outage (free tier: 45 req/min) halts every cron tick.
-- Add optional `proxy_check_strict: bool` config field (default `false` = soft).
-- Note: in `ip_source: local` mode there is no proxy to detect — we read the interface directly. Phase G contains the retirement path for `IsProxyIP` entirely.
-- Tests: mock `IsProxyIP` returning an error → strict=false proceeds, strict=true aborts.
-- **Accept:** third-party outages no longer block DNS updates by default.
-
 ### Phase A — Prep refactors (no behavior change)
 
 **A1. Extract `internal/updater`; add context and signals.**
@@ -422,21 +415,22 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - `cmd/update.go` shrinks to: IP detect (if no override) → proxy check → `updater.Update` → print.
 - **Plumb `context.Context` with a top-level timeout** (default 30s, overridable). Replace all `context.TODO()` in `internal/dns/route53.go` with the passed-in context so Route53 hangs become bounded.
 - **Signal handling in `cmd/update.go`**: use `signal.NotifyContext(ctx, SIGINT, SIGTERM)` so cron-killed updates cancel cleanly instead of leaving the cache inconsistent with an in-flight Route53 call.
-- Tests: move existing coverage into `internal/updater/updater_test.go`; add `OverrideIP` test; add a timeout test (Route53 mock that blocks → context cancels).
+- Tests: `TestReadCachedIP` and `TestWriteCachedIP` move verbatim from `cmd/update_test.go` to `internal/updater/updater_test.go`; `TestUpdateCommandDryRun` stays in `cmd/` (it tests cobra wiring, not update logic); subprocess tests in `tests/integration_test.go` are refactor-transparent. New tests: `TestUpdate_OverrideIP`, `TestUpdate_ContextTimeout` (mock Route53 blocks → ctx cancels).
 - **Accept:** `dddns update` happy-path identical; hangs bounded; `SIGTERM` exits cleanly.
 
 **A2. Factor `EncryptString` / `DecryptString` in `internal/crypto`.**
-- Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner.
-- Tests: round-trip test for arbitrary strings; existing credential tests still pass.
+- Extract from `EncryptCredentials`; `EncryptCredentials` becomes a one-liner wrapping `EncryptString(ak + ":" + sk)`.
+- Tests: new file `internal/crypto/device_crypto_test.go` with `TestEncryptDecryptString_RoundTrip`, `TestEncryptCredentials_RoundTrip`, `TestDecrypt_TamperedCiphertext_Fails`. Closes an existing coverage gap — the package has no direct unit tests today, only CLI-level coverage via `tests/integration_test.go:TestSecureCommand`.
 - **Accept:** no behavior change; secure config load/save bit-identical.
 
 ### Phase B — Config schema (no consumer yet)
 
-**B1. Add `ServerConfig` struct.**
-- `internal/config/config.go`: new `ServerConfig` struct with `Bind`, `SharedSecret`, `AllowedCIDRs`, `AuditLog`, `OnAuthFailure`. Field added to `Config` as optional `*ServerConfig`.
-- Validation method on `ServerConfig`: CIDRs parseable, bind is `host:port`, secret non-empty.
-- Tests: YAML round-trip; validation errors for each missing field.
-- **Accept:** existing configs load without the block; new block loads correctly.
+**B1. Add `ServerConfig` struct and `IPSource` field.**
+- `internal/config/config.go`: new `ServerConfig` struct with `Bind`, `SharedSecret`, `AllowedCIDRs`, `AuditLog`, `OnAuthFailure`, `WANInterface`. Added as optional `*ServerConfig` on `Config`.
+- Top-level `IPSource string` on `Config` (values: `""`/`"auto"` default, `"local"`, `"remote"`). Follows the existing convention — if set in config it overrides the mode-based default; if unset, the default is mode-driven (serve → local always; cron → `local` on UDM profile, `remote` elsewhere).
+- `ServerConfig.Validate()` method: CIDRs parseable, bind is `host:port`, shared secret non-empty.
+- Tests: YAML round-trip; `ip_source` override parsed; validation errors for each missing server field.
+- **Accept:** existing configs load without the block; new block + `ip_source` load correctly.
 
 **B2. Encrypt/decrypt `server.shared_secret` in secure config.**
 - `internal/config/secure_config.go`: new `secret_vault` field; encrypt via `crypto.EncryptString`, decrypt on load.
@@ -464,13 +458,14 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 - Tests: mocked interface list covering dotted-quad IPv4, RFC1918, CGNAT, PPPoE (`ppp0`), no-address states; fake default-route file.
 - Integrates with `cmd/update.go` via the `ip_source` config field (see §6).
 
-**C5. `internal/server/handler.go` + unit tests.**
+**C5. `internal/server/handler.go` + `internal/server/status.go` (writer) + unit tests.**
 - Parse query, validate method, hostname, (loose) myip sanity.
 - Call `wanip.FromInterface(cfg.Server.WANInterface)` → `localIP`.
 - If claimed `myip` ≠ `localIP`: record anomaly in the audit entry.
 - Call `updater.Update(ctx, cfg, Options{OverrideIP: localIP})`.
-- Emit audit log entry; map `Result.Action` to dyndns body.
-- Tests: table-driven for every row of §10; mock `wanip` and `updater`.
+- Emit audit log line; overwrite `/data/.dddns/serve-status.json` with last-request summary (new `status.go` holds the writer; reader lands in D1).
+- Map `Result.Action` to dyndns body.
+- Tests: table-driven for every row of §10; mock `wanip` and `updater`; assert status file written with expected fields.
 
 **C6. `internal/server/server.go` + `cmd/serve.go`.**
 - `net.Listen` on `cfg.Server.Bind`; middleware chain: cidr → auth → handler.
@@ -481,10 +476,10 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 
 ### Phase D — Operational commands
 
-**D1. `dddns serve status`.**
-- `internal/server/status.go`: reads `/data/.dddns/serve-status.json` (written by handler on each request).
-- Prints last-request-at, last-success-at, failure counts, lockout state.
-- Tests: status file round-trip.
+**D1. `dddns serve status` + `internal/server/status.go` (reader).**
+- Add `Read()` helper to `status.go` (writer created in C5).
+- Prints last-request-at, last-success-at, failure counts, lockout state from the status file.
+- Tests: status file round-trip (write via the C5 helper, read via the subcommand).
 
 **D2. `dddns serve test`.**
 - Reads shared secret (decrypting `.secure` if needed), crafts Basic Auth `GET`, prints response body and HTTP status.
@@ -545,13 +540,13 @@ These are deliberately deferred to keep the initial surface small and well-teste
 
 | Phase | Commits | Net code added (approx) |
 |-------|---------|-------------------------|
-| 0 (bug fixes)   | 5  | ~150 lines + tests      |
+| 0 (bug fixes)   | 4  | ~130 lines + tests      |
 | A (refactor)    | 2  | ~50 (context + signals) |
 | B (schema)      | 2  | ~150 lines              |
 | C (server core) | 6  | ~800 lines + tests      |
 | D (ops)         | 4  | ~300 lines              |
 | E (installer)   | 1  | ~100 bash lines         |
 | F (docs)        | 3  | (docs only)             |
-| **Total**       | **23 commits** | **~1,550 lines Go + docs** |
+| **Total**       | **22 commits** | **~1,530 lines Go + docs** |
 
 No new Go module dependencies (everything uses stdlib + existing deps).

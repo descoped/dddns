@@ -473,9 +473,13 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (138 tests across 12 packages).
 **Findings:** No surprises. The `fakeClock.advance` pattern keeps lockout tests deterministic and sub-second fast.
 
-**C3. `internal/server/audit.go` + unit tests.**
-- JSONL writer; open-append, size-based rotation at 10 MB; atomic write.
-- Tests: concurrent writes serialize correctly, rotation triggers at threshold.
+**C3. `internal/server/audit.go` + unit tests.** ✅ Completed
+- New `AuditLog` type with `AuditEntry` (ts, remote, hostname, myip_claimed, myip_verified, auth, action, route53_change_id, error). `Write` marshals the entry as one JSON line, appends it with `O_APPEND|O_CREATE|O_WRONLY` under a `sync.Mutex`, and rotates the file to `path+".old"` when the existing size hits `AuditMaxSize` (10 MB by default; overridable for tests).
+- `now` is injectable (same pattern as `Authenticator`) so the timestamp in each written entry is deterministic in tests.
+- 5 tests: basic write + round-trip, multi-line append, rotation at a tiny threshold, a 1,000-write concurrent exerciser (validates no partial/interleaved lines), and a timestamp-hook check.
+
+**Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (143 tests across 12 packages).
+**Findings:** No surprises. Single-writer `O_APPEND` is atomic for lines well under `PIPE_BUF`; the mutex is belt-and-braces but simplifies the rotation-then-append sequence (otherwise two goroutines could both observe the file over-threshold and both try to rename).
 
 **C4. `internal/wanip` + updater dispatch + unit tests.**
 - New package `internal/wanip`. `FromInterface(ifaceName string) (net.IP, error)` returns the first non-loopback, non-private, non-link-local IPv4 on the named interface. Empty `ifaceName` triggers auto-detection: pick the interface on the default route, filtered for a publicly-routable IPv4.

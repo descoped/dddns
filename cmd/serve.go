@@ -3,7 +3,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,9 +40,32 @@ outcome, the resulting action, and any error. Reads
 	RunE: runServeStatus,
 }
 
+var (
+	serveTestHostname string
+	serveTestIP       string
+)
+
+var serveTestCmd = &cobra.Command{
+	Use:   "test",
+	Short: "Send a local Basic-Auth'd request to the serve-mode listener",
+	Long: `Craft a dyndns-style GET to 127.0.0.1 on the configured bind port,
+using the shared secret from the config. Prints the HTTP status and
+response body. Exits 0 on "good" / "nochg", non-zero on any other
+dyndns code or network failure.
+
+This is the SSH debug path — run it from a shell on the router to
+confirm the listener is reachable, the credential matches, and the
+handler wiring produces an expected response.`,
+	RunE: runServeTest,
+}
+
 func init() {
 	rootCmd.AddCommand(serveCmd)
 	serveCmd.AddCommand(serveStatusCmd)
+	serveCmd.AddCommand(serveTestCmd)
+
+	serveTestCmd.Flags().StringVar(&serveTestHostname, "hostname", "", "Override hostname (default: cfg.Hostname)")
+	serveTestCmd.Flags().StringVar(&serveTestIP, "ip", "1.2.3.4", "myip query param (handler ignores for the actual UPSERT — this is just for the wire-level test)")
 }
 
 func runServe(_ *cobra.Command, _ []string) error {
@@ -55,6 +83,80 @@ func runServe(_ *cobra.Command, _ []string) error {
 	defer stop()
 
 	return srv.Run(ctx)
+}
+
+func runServeTest(cmd *cobra.Command, _ []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg.Server == nil {
+		return fmt.Errorf("serve mode not configured (no server block in config)")
+	}
+
+	hostname := serveTestHostname
+	if hostname == "" {
+		hostname = cfg.Hostname
+	}
+
+	return performServeTest(
+		loopbackURL(cfg.Server.Bind),
+		hostname,
+		cfg.Server.SharedSecret,
+		serveTestIP,
+		cmd.OutOrStdout(),
+	)
+}
+
+// performServeTest is the side-effect-free core of runServeTest. It is
+// called with an explicit base URL so tests can point at an
+// httptest.NewServer rather than a real loopback listener.
+func performServeTest(baseURL, hostname, secret, myip string, out io.Writer) error {
+	u := baseURL + "/nic/update?hostname=" + url.QueryEscape(hostname) + "&myip=" + url.QueryEscape(myip)
+
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.SetBasicAuth("dddns", secret)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	fmt.Fprintf(out, "HTTP %d\n", resp.StatusCode)
+	fmt.Fprintf(out, "Body: %s\n", strings.TrimSpace(string(body)))
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
+	}
+	fields := strings.Fields(strings.TrimSpace(string(body)))
+	if len(fields) == 0 {
+		return fmt.Errorf("server returned empty body")
+	}
+	switch fields[0] {
+	case "good", "nochg":
+		return nil
+	default:
+		return fmt.Errorf("dyndns code %q", fields[0])
+	}
+}
+
+// loopbackURL builds a URL pointing at localhost from a bind address
+// like "0.0.0.0:53353" or "127.0.0.1:53353".
+func loopbackURL(bind string) string {
+	host, port, err := net.SplitHostPort(bind)
+	if err != nil {
+		return "http://" + bind
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 func runServeStatus(cmd *cobra.Command, _ []string) error {

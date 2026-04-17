@@ -520,9 +520,15 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. `go test -race ./...` clean. Full suite green (182 tests across 13 packages). `dddns serve status` surfaces in `--help` and produces the expected error-with-hint when the status file is absent.
 **Findings:** Discovered a latent goroutine-lifetime bug in the C5 concurrent-atomicity test that only manifested under the race detector (a half-finished `os.CreateTemp` prevented `t.TempDir()` cleanup). The fix is a trivial `<-done` join; worth remembering as a pattern for any future test with a background-goroutine writer.
 
-**D2. `dddns serve test`.**
-- Reads shared secret (decrypting `.secure` if needed), crafts Basic Auth `GET`, prints response body and HTTP status.
-- Tests: hits a `httptest.NewServer` running the real handler; verifies exit codes per outcome.
+**D2. `dddns serve test`.** ✅ Completed
+- New `dddns serve test` subcommand. Loads config (decrypts `.secure` via the existing `config.Load` path), resolves the listener's loopback URL from `cfg.Server.Bind` (translating `0.0.0.0`/`::` to `127.0.0.1`), crafts a Basic-Auth'd `GET /nic/update?hostname=X&myip=Y`, prints `HTTP <status>` and `Body: <trimmed body>`.
+- Flags: `--hostname` (default `cfg.Hostname`, letting users provoke a `nohost` response for sanity checking) and `--ip` (default `1.2.3.4`; the handler ignores `myip` for the actual UPSERT but the wire-level parameter matters for protocol testing).
+- Exit behaviour via the returned error: nil (exit 0) when the body's first token is `good` or `nochg`; error (non-zero) on any other dyndns code, non-200 HTTP status, or network failure. A caller running `dddns serve test` from a shell sees the exit code via `$?`.
+- Factored the core into `performServeTest(baseURL, hostname, secret, myip, io.Writer) error` so tests use `httptest.NewServer` stubs rather than spinning up a real listener.
+- 7 tests: `good`, `nochg`, `badauth`, HTTP 403, `dnserr`, unreachable host (`127.0.0.1:1`), and a `loopbackURL` table-driven check covering `127.0.0.1:...`, `0.0.0.0:...`, bare `:port`, a LAN IP, and `[::]`.
+
+**Status:** ✅ Complete. Full suite green (189 tests across 13 packages). `dddns serve test --help` visible in the CLI.
+**Findings:** No surprises. The `performServeTest` split is a repeat of the updater-extraction pattern — pure function for the logic, cobra thin wrapper for flag/config wiring — and keeps the tests network-stub-only.
 
 **D3. `dddns config rotate-secret`.**
 - Generates 256-bit secret via `crypto/rand`.

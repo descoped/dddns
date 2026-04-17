@@ -574,9 +574,17 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. No code changes; docs only.
 **Findings:** The existing policy already scoped `Resource` to a specific hosted zone — the upgrade adds record-name, type, and action restrictions on top. Worth a prominent "Why this shape?" explainer because `Condition` blocks are invisible in the IAM UI unless users click into the JSON.
 
-**F2. `docs/udm-guide.md` — serve mode.**
-- New section covering serve-mode install, UI setup, rotation, log files, mode switching.
-- Update the "Monitoring" section to cover the audit log and distinguish it from the operational log.
+**F2. `docs/udm-guide.md` — serve mode.** ✅ Completed
+- New **Run Modes** section right after Prerequisites: side-by-side table comparing cron and serve on trigger, boot artefact, log file, and typical latency. Sets expectations before the installer prompt.
+- New **Serve Mode** section: install command (`--mode serve`), UniFi UI values table (Service/Hostname/Username/Password/Server), `dddns serve test` + `serve status` usage, `rotate-secret` explainer with the `--init` / `--quiet` variants, log-file inventory, and a `tail -f` example for both server + audit logs in parallel.
+- New **Switching Modes** section: `dddns config set-mode cron|serve`, the "apply immediately vs. reboot" note, and the idempotency guarantee (rewriting cron removes stray serve loops and vice versa).
+- **Monitoring** section rewritten around a four-row log-file table that distinguishes the operational log (`dddns-server.log` — daemon lifecycle) from the audit log (`dddns-audit.log` — per-request JSONL). Added mode-specific "Check Cron Execution" and "Check the Listener" blocks.
+- **Advanced Configuration → Custom Update Interval** rewritten: editing the generated boot script is documented as transient; the recommended approach is a sibling `/etc/cron.d/dddns-fast` entry that survives the next `set-mode` call.
+- **Getting Help → Test components** fixed to drop the obsolete `--check-only` installer flag; replaced with `dddns update --dry-run` (cron) and `dddns serve test` (serve).
+- File itself was renamed to lowercase kebab-case by commit `75c7d65`.
+
+**Status:** ✅ Complete. No code changes.
+**Findings:** Several existing sections had stale assumptions — `--check-only` flag that never existed in the post-E1 installer, hand-edit-the-boot-script advice that would be overwritten by `set-mode`, and a cron-only monitoring story that left serve-mode users looking at the wrong log file. The Run Modes table up front is the biggest UX win: it answers "which one do I pick?" before the reader hits the install command.
 
 **F3. `docs/troubleshooting.md` — serve-mode issues.**
 - `badauth` → check UniFi UI password against current secret

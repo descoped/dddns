@@ -5,7 +5,10 @@ Complete guide for running dddns on Ubiquiti Dream Machine devices.
 ## Table of Contents
 - [Supported Devices](#supported-devices)
 - [Prerequisites](#prerequisites)
+- [Run Modes](#run-modes)
 - [Installation](#installation)
+- [Serve Mode](#serve-mode)
+- [Switching Modes](#switching-modes)
 - [UniFi OS Compatibility](#unifi-os-compatibility)
 - [Persistence Across Updates](#persistence-across-updates)
 - [Network Configuration](#network-configuration)
@@ -42,7 +45,22 @@ Before installing dddns on your UDM:
 
 4. **AWS Account Setup**
    - Route53 hosted zone configured
-   - AWS credentials ready
+   - AWS credentials ready (see the [AWS Setup Guide](aws-setup.md) for the scoped IAM policy)
+
+## Run Modes
+
+dddns supports two mutually-exclusive run modes on UniFi Dream devices. Pick one at install time; switch later with `dddns config set-mode`.
+
+| Mode  | Trigger              | Boot artefact                   | Log file                     | Typical latency |
+|-------|----------------------|---------------------------------|------------------------------|-----------------|
+| cron  | `/etc/cron.d/dddns` every 30 min | `/data/on_boot.d/20-dddns.sh` (installs cron) | `/var/log/dddns.log` | up to 30 min |
+| serve | UniFi UI "Custom" Dynamic DNS → `inadyn` → local HTTP | `/data/on_boot.d/20-dddns.sh` (starts supervised `dddns serve` loop) | `/var/log/dddns-server.log` + `/var/log/dddns-audit.log` | seconds |
+
+**cron mode** is the safe default — polls your public IP, compares against the cached value, UPSERTs Route53 if changed. No inbound sockets, no secrets on the wire.
+
+**serve mode** replaces the cron entry with a long-running `dddns serve` listener bound to `127.0.0.1:53353`. UniFi's built-in `inadyn` (configured via the Network Controller's Dynamic DNS dialog) calls the listener on every WAN IP change, and the handler reads the authoritative IP directly from the WAN interface before calling Route53. Faster, but introduces a new on-device HTTP surface that must be kept loopback-only. See the [Serve Mode](#serve-mode) section below for full setup.
+
+The installer asks which one you want; pass `--mode cron` or `--mode serve` to skip the prompt.
 
 ## Installation
 
@@ -77,13 +95,18 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-
    # Download installer
    curl -O https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh
    chmod +x install-on-unifi-os.sh
-   
-   # Check environment first
-   ./install-on-unifi-os.sh --check-only
 
-   # Install
+   # Interactive (prompts for mode)
    ./install-on-unifi-os.sh
+
+   # Non-interactive
+   ./install-on-unifi-os.sh --mode cron    # polling every 30 min
+   ./install-on-unifi-os.sh --mode serve   # event-driven via UniFi UI
    ```
+
+   The installer verifies the binary's SHA-256 against the release's
+   `checksums.txt` before extracting — a tampered or corrupt download
+   aborts the install rather than running.
 
 4. **Configure AWS credentials**
    ```bash
@@ -105,6 +128,108 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-
    # Test update (dry run)
    dddns update --dry-run
    ```
+
+## Serve Mode
+
+Serve mode turns the router's built-in dynamic DNS client (`inadyn`) into dddns's trigger. When the WAN IP changes, UniFi OS fires an HTTP request to the local `dddns serve` listener, which reads the authoritative IP from the WAN interface and pushes to Route53 — no 30-minute delay, no third-party IP-lookup round trip.
+
+### Installing
+
+```bash
+./install-on-unifi-os.sh --mode serve
+```
+
+The installer:
+1. Generates a 256-bit shared secret and writes it to `config.yaml` (or `config.secure` if secure mode is already enabled).
+2. Creates the `server:` block with loopback-only bind (`127.0.0.1:53353`) and a `127.0.0.0/8` CIDR allowlist.
+3. Writes the on_boot.d script that starts a supervised `dddns serve` loop.
+4. Prints a framed block with the UniFi UI values to paste.
+
+Copy the printed secret immediately — it's not shown again. To rotate later, run `dddns config rotate-secret` (see [Rotating the Shared Secret](#rotating-the-shared-secret) below).
+
+### Configuring the UniFi Dynamic DNS UI
+
+Settings → Internet → Dynamic DNS → **Create Dynamic DNS**:
+
+| Field     | Value                                                   |
+|-----------|---------------------------------------------------------|
+| Service   | `Custom`                                                |
+| Hostname  | must match `cfg.Hostname` (e.g. `home.example.com`)     |
+| Username  | `dddns` (any value — the handler ignores the username)  |
+| Password  | the shared secret printed by the installer             |
+| Server    | `127.0.0.1:53353/nic/update?hostname=%h&myip=%i`        |
+
+Click **Apply**. UniFi OS fires `inadyn` on every subsequent WAN IP change.
+
+### Testing the Listener
+
+From an SSH session on the router:
+
+```bash
+dddns serve test
+```
+
+This crafts a Basic-Auth'd request to `127.0.0.1:53353`, hitting your own handler. Expected output on a healthy install:
+
+```
+HTTP 200
+Body: good <your-wan-ip>
+```
+
+Exit code 0 on `good` or `nochg`; non-zero otherwise. Useful after a rotation or if UniFi UI status turns red.
+
+### Status Summary
+
+```bash
+dddns serve status
+```
+
+Prints the last request the listener handled: timestamp, remote address, auth outcome, action, and error (if any). The file it reads is `/data/.dddns/serve-status.json`, refreshed atomically on every request.
+
+### Rotating the Shared Secret
+
+```bash
+dddns config rotate-secret
+```
+
+Generates a fresh 256-bit secret, writes it back to config (re-encrypting if `.secure`), and prints the new value. Then paste the new secret into the UniFi UI's Password field — the next IP change will fail auth until you do.
+
+`dddns config rotate-secret --init` creates the `server:` block if one doesn't exist yet (what the installer runs internally). `--quiet` prints only the secret on stdout, for scripting.
+
+### Log Files
+
+| File                           | What's in it                                           |
+|--------------------------------|--------------------------------------------------------|
+| `/var/log/dddns-server.log`    | stdout/stderr from the supervised `dddns serve` loop — startup, shutdown, unexpected errors |
+| `/var/log/dddns-audit.log`     | JSONL, one line per request (ts, remote, hostname, myip_claimed, myip_verified, auth, action, route53_change_id, error) |
+| `/data/.dddns/serve-status.json` | Last-request summary (overwritten; `dddns serve status` reads this) |
+
+Follow both logs during a test:
+
+```bash
+tail -f /var/log/dddns-server.log /var/log/dddns-audit.log
+```
+
+The audit log rotates itself at 10 MB to `.old` (one keep). A `myip_claimed` value that differs from `myip_verified` is a strong anomaly signal — the handler always uses the verified (local interface) IP for the Route53 upsert, so the difference is captured for review but never acted on.
+
+## Switching Modes
+
+The modes are mutually exclusive. Switch at any time with:
+
+```bash
+dddns config set-mode cron
+dddns config set-mode serve
+```
+
+The command rewrites `/data/on_boot.d/20-dddns.sh` for the target mode. It does not apply the change immediately — run the script or reboot:
+
+```bash
+sudo /data/on_boot.d/20-dddns.sh
+```
+
+The generated script is idempotent: switching to `cron` removes any stale serve loop (`pkill -f "dddns serve"`) and installs the cron entry; switching to `serve` removes `/etc/cron.d/dddns` and starts the supervised loop. Re-running it repeatedly converges on the target state.
+
+Switching to `serve` requires `cfg.Server` to be populated. If the block isn't there, run `dddns config rotate-secret --init` first.
 
 ## UniFi OS Compatibility
 
@@ -190,26 +315,42 @@ export BIND_INTERFACE=eth8  # Your WAN interface
 
 ## Monitoring
 
+### Log Files at a Glance
+
+| File                             | Mode  | Purpose                                             |
+|----------------------------------|-------|-----------------------------------------------------|
+| `/var/log/dddns.log`             | cron  | `dddns update` stdout/stderr on each cron tick     |
+| `/var/log/dddns-boot.log`        | both  | One line per boot-script execution                 |
+| `/var/log/dddns-server.log`      | serve | `dddns serve` lifecycle (startup, crashes, restarts) |
+| `/var/log/dddns-audit.log`       | serve | JSONL trail of every request the listener handled  |
+
+The two serve-mode logs answer different questions. The *server* log tells you whether the daemon is alive; the *audit* log tells you what the daemon did for each caller.
+
 ### View Logs
 
+Cron mode:
+
 ```bash
-# Real-time logs
 tail -f /var/log/dddns.log
-
-# Last 50 entries
-tail -50 /var/log/dddns.log
-
-# Today's updates
-grep "$(date +%Y-%m-%d)" /var/log/dddns.log
-
-# Check for errors
 grep -i error /var/log/dddns.log
+grep "$(date +%Y-%m-%d)" /var/log/dddns.log
 ```
 
-### Check Cron Execution
+Serve mode:
 
 ```bash
-# View cron jobs
+# Operational log — daemon lifecycle
+tail -f /var/log/dddns-server.log
+
+# Audit log — per-request structured trail (JSONL)
+tail -f /var/log/dddns-audit.log
+tail -n 50 /var/log/dddns-audit.log | jq -c '{ts,remote,auth,action,error}'
+```
+
+### Check Cron Execution (cron mode)
+
+```bash
+# View cron entry
 cat /etc/cron.d/dddns
 
 # Check cron logs
@@ -217,6 +358,19 @@ grep CRON /var/log/messages | grep dddns
 
 # Verify cron is running
 ps aux | grep cron
+```
+
+### Check the Listener (serve mode)
+
+```bash
+# Is the daemon running?
+pgrep -laf "dddns serve"
+
+# What's the last request it handled?
+dddns serve status
+
+# Can we reach it from the router itself?
+dddns serve test
 ```
 
 ### Monitor IP Changes
@@ -257,24 +411,21 @@ chmod +x /data/on_boot.d/21-dddns-monitor.sh
 
 ## Advanced Configuration
 
-### Custom Update Interval
+### Custom Update Interval (cron mode)
 
-Default is 30 minutes. To change:
+The default 30-minute interval lives in `/data/on_boot.d/20-dddns.sh`, which is generated by `dddns config set-mode cron`. Editing that file by hand works until the next `set-mode` call overwrites it. For a lasting change, add a custom cron entry alongside the managed one:
 
 ```bash
-# Edit cron schedule
-vi /data/on_boot.d/20-dddns.sh
-
-# Change the cron line:
-# Every 15 minutes
-*/15 * * * * root /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
-
-# Every hour
-0 * * * * root /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
-
-# Run the script to apply
-/data/on_boot.d/20-dddns.sh
+cat > /etc/cron.d/dddns-fast << 'CRON'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/15 * * * * root /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+CRON
+rm -f /etc/cron.d/dddns   # optional — disable the 30-min default
+/etc/init.d/cron restart
 ```
+
+Serve mode users should ignore this section — there is no polling interval to tune; updates happen on every WAN IP change as observed by `inadyn`.
 
 ### Multiple Domains
 
@@ -430,21 +581,19 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-
    tail -100 /var/log/dddns.log
    ```
 
-2. **Run environment check**
+2. **Test components**
    ```bash
-   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --check-only
-   ```
-
-3. **Test components**
-   ```bash
-   # Test IP resolution
-   curl -s https://checkip.amazonaws.com
-   
-   # Test AWS access
-   aws route53 list-hosted-zones --profile your-profile
-   
-   # Test dddns
+   # Cron mode: dry-run the full update flow
    dddns update --dry-run
+
+   # Serve mode: exercise the listener locally
+   dddns serve test
+
+   # Independent: test IP resolution
+   curl -s https://checkip.amazonaws.com
+
+   # Independent: verify AWS access
+   aws route53 list-hosted-zones --profile your-profile
    ```
 
 ## Best Practices

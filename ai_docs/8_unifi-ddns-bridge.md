@@ -491,14 +491,13 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (159 tests across 13 packages).
 **Findings:** cron-on-UDM now reads the WAN interface locally by default — zero network round-trip for 99% of users. Cron on laptops/Docker keeps calling `checkip.amazonaws.com` per the `remote` default for non-UDM profiles; nothing changed for them. The package-level hook pattern (mirroring `Authenticator.now` and `AuditLog.now`) keeps the resolver pure and fully mockable.
 
-**C5. `internal/server/handler.go` + `internal/server/status.go` (writer) + unit tests.**
-- Parse query, validate method, hostname, (loose) myip sanity.
-- Call `wanip.FromInterface(cfg.Server.WANInterface)` → `localIP`.
-- If claimed `myip` ≠ `localIP`: record anomaly in the audit entry.
-- Call `updater.Update(ctx, cfg, Options{OverrideIP: localIP})`.
-- Emit audit log line; overwrite `/data/.dddns/serve-status.json` with last-request summary (new `status.go` holds the writer; reader lands in D1).
-- Map `Result.Action` to dyndns body.
-- Tests: table-driven for every row of §10; mock `wanip` and `updater`; assert status file written with expected fields.
+**C5. `internal/server/handler.go` + `internal/server/status.go` (writer) + unit tests.** ✅ Completed
+- New `StatusWriter` serializes a `StatusSnapshot` (last_request_at, last_remote_addr, last_auth_outcome, last_action, last_error) to the configured path via tempfile-and-rename. Writes are atomic — a concurrent reader never sees a partial file.
+- New `Handler` implements `http.Handler`. Per-request it: (1) CIDR-gates on `RemoteAddr` (HTTP 403); (2) rejects non-GET (HTTP 405); (3) does Basic-Auth via `Authenticator.Check` (→ `badauth` on miss or lockout); (4) validates `hostname` (→ `notfqdn`/`nohost`); (5) reads the local WAN IP with `wanip.FromInterface`; (6) delegates to `updater.Update` with `OverrideIP=localIP.String()` so the `myip` query param is *never* trusted for the upsert — it's only captured in the audit entry; (7) maps `Result.Action` to `good`/`nochg`/`dnserr`; (8) recovers from panics → `911`. Each request wraps the outgoing call in `context.WithTimeout(r.Context(), 30s)` to bound Route53 hangs. Every outcome (including rejections) emits an audit line and refreshes the status file.
+- Test fixture in `handler_test.go` uses `httptest.NewRecorder` and an injected stub for `wanIP` and `updateIP` — no network, no AWS. 13 tests cover: §10 response table (CIDR deny, method 405, missing/bad auth, missing hostname, wrong hostname, updated=good, nochg, route53 error, wanip error), lockout fall-through to `badauth`, the anomaly case (myip claim ≠ local IP) where the handler pushes local anyway and records both in the audit entry, the status file being refreshed with the correct fields, and a concurrent atomic-replace check on `StatusWriter`.
+
+**Status:** ✅ Complete. `go test -race ./internal/server/...` clean. Full suite green (173 tests across 13 packages).
+**Findings:** Keeping CIDR + auth in the handler (instead of separate `http.Handler` middleware) let me build one `AuditEntry` across every outcome and emit it from a single point. A later refactor can split middleware if needed; current shape is simple and tested end-to-end.
 
 **C6. `internal/server/server.go` + `cmd/serve.go`.**
 - `net.Listen` on `cfg.Server.Bind`; middleware chain: cidr → auth → handler.

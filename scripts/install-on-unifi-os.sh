@@ -1,40 +1,42 @@
 #!/bin/bash
 #
-# dddns Installation Script for Ubiquiti Dream Machines
+# dddns installer for Ubiquiti UniFi Dream devices
 #
-# One-line installation:
+# Usage:
 #   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
+#   ./install-on-unifi-os.sh [--mode cron|serve] [--force] [--uninstall]
 #
-# Or download and run:
-#   ./install-on-unifi-os.sh [--uninstall] [--force]
+# Modes are mutually exclusive:
+#   cron  — /etc/cron.d/dddns runs `dddns update` every 30 minutes (default).
+#   serve — /data/on_boot.d/20-dddns.sh starts a supervised `dddns serve`
+#           loop that handles dyndns requests from the UniFi UI.
 #
+# On existing installs the script preserves the currently-configured
+# mode unless --mode is passed explicitly.
 
 set -e
 
-# Configuration
 readonly GITHUB_REPO="descoped/dddns"
 readonly INSTALL_DIR="/data/dddns"
 readonly BINARY_NAME="dddns"
 readonly CONFIG_DIR="/data/.dddns"
 readonly BOOT_SCRIPT_DIR="/data/on_boot.d"
 readonly BOOT_SCRIPT_NAME="20-dddns.sh"
+readonly BOOT_SCRIPT="${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
 readonly CRON_FILE="/etc/cron.d/dddns"
 readonly LOG_FILE="/var/log/dddns.log"
 
-# Colors
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
-# Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
-log_error() { echo -e "${RED}[✗]${NC} $1" >&2; }
+log_error()   { echo -e "${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
 
-# Check if running as root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         log_error "This script must be run as root"
@@ -42,444 +44,413 @@ check_root() {
     fi
 }
 
-# Detect architecture
 detect_arch() {
-    local arch=$(uname -m)
+    local arch
+    arch=$(uname -m)
     case "$arch" in
         aarch64|arm64)
             ARCH="arm64"
             log_success "Detected ARM64 architecture"
             ;;
         *)
-            log_error "Unsupported architecture: $arch"
-            log_error "UDM devices require ARM64"
+            log_error "Unsupported architecture: $arch (UniFi Dream devices require ARM64)"
             exit 1
             ;;
     esac
 }
 
-# Check if this is a UDM/UDR device
 check_udm() {
-    # First check if /data exists (required for all UniFi devices)
     if [[ ! -d "/data" ]]; then
-        log_error "/data directory not found - this doesn't appear to be a UDM/UDR device"
+        log_error "/data not found — this does not look like a UniFi Dream device"
         exit 1
     fi
-
-    # Detect UniFi OS version
     if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
-        log_info "Detected UniFi OS v3 (UDM)"
+        log_info "Detected UniFi OS v3"
     elif [[ -d /etc/unifi-core ]] || [[ -f /etc/default/unifi ]]; then
-        log_info "Detected UniFi OS v4 (UDM/UDR)"
-    elif [[ -f /etc/board.info ]]; then
-        log_info "Detected Ubiquiti device (via board.info)"
-    elif [[ -d /data/unifi ]]; then
-        log_info "Detected Ubiquiti device (via /data/unifi)"
+        log_info "Detected UniFi OS v4"
+    elif [[ -f /etc/board.info ]] || [[ -d /data/unifi ]]; then
+        log_info "Detected Ubiquiti device"
     else
-        log_warning "Could not determine UniFi OS version, but /data exists - continuing"
+        log_warning "Could not confirm UniFi OS version, but /data exists — continuing"
     fi
 
-    # Check available space
-    local available=$(df -BM /data | awk 'NR==2 {print $4}' | sed 's/M//')
+    local available
+    available=$(df -BM /data | awk 'NR==2 {print $4}' | sed 's/M//')
     if [[ $available -lt 50 ]]; then
-        log_warning "Low disk space: ${available}MB available (50MB recommended)"
+        log_warning "Low disk space: ${available}MB on /data (50MB recommended)"
     else
-        log_success "Disk space: ${available}MB available"
+        log_success "Disk space on /data: ${available}MB"
     fi
 }
 
-# Install unifios-utilities if needed
 install_unifios_utilities() {
-    if [[ ! -f "/data/on_boot.sh" ]] && [[ ! -d "/data/on_boot.d" ]]; then
-        log_warning "Boot persistence requires unifios-utilities or on_boot.d support"
-        log_info "This ensures dddns survives firmware updates"
+    if [[ ! -d "/data/on_boot.d" ]] && [[ ! -f "/data/on_boot.sh" ]]; then
+        log_warning "on-boot-script not installed — required for persistence across firmware updates"
         echo ""
-        echo -n "Install unifios-utilities for boot persistence? [Y/n]: "
+        echo -n "Install unifios-utilities now? [Y/n]: "
         read -r response </dev/tty || response="y"
-
         if [[ -z "$response" ]] || [[ "$response" =~ ^[Yy] ]]; then
             log_info "Installing unifios-utilities..."
-            if curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash; then
-                log_success "unifios-utilities installed"
-            else
-                log_error "Failed to install unifios-utilities"
-                log_info "You may need to install it manually for persistence across reboots"
-            fi
+            curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash || {
+                log_error "Failed to install unifios-utilities (boot persistence will not work)"
+            }
         else
-            log_warning "Skipping unifios-utilities installation"
-            log_info "Note: dddns may not persist after firmware updates without it"
-        fi
-    else
-        if [[ -d "/data/on_boot.d" ]]; then
-            log_success "Boot persistence directory already exists"
-        else
-            log_success "unifios-utilities already installed"
+            log_warning "Skipping — dddns may not persist across firmware updates"
         fi
     fi
-
-    # Ensure boot script directory exists
     mkdir -p "${BOOT_SCRIPT_DIR}"
 }
 
-# Get latest release version
 get_latest_version() {
-    # Don't log here as it interferes with command substitution
-    local version=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | \
-                    grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-
+    local version
+    version=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | \
+              grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
     if [[ -z "$version" ]]; then
-        log_error "Failed to get latest version from GitHub"
+        log_error "Failed to fetch latest release tag from GitHub"
         exit 1
     fi
-
     echo "$version"
 }
 
-# Download and install binary
+# Download binary + checksums.txt, verify SHA-256, extract, install.
 install_binary() {
     local version="$1"
     local force="${2:-false}"
 
-    # Check if already installed
     if [[ -f "${INSTALL_DIR}/${BINARY_NAME}" ]] && [[ "$force" != "true" ]]; then
-        local current=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | awk '{print $3}')
+        local current
+        current=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | awk '{print $3}')
         if [[ "$current" == "$version" ]] || [[ "v$current" == "$version" ]]; then
             log_success "dddns ${version} already installed"
             return 0
         fi
     fi
 
-    log_info "Downloading dddns ${version}..."
-
-    # Create installation directory
-    mkdir -p "${INSTALL_DIR}"
-
-    # Download archive (GoReleaser format)
     local archive_name="dddns_Linux_${ARCH}.tar.gz"
-    if [[ "${ARCH}" == "arm" ]]; then
-        archive_name="dddns_Linux_armv7.tar.gz"
-    fi
+    local base_url="https://github.com/${GITHUB_REPO}/releases/download/${version}"
+    local temp_dir="/tmp/dddns-install-$$"
+    mkdir -p "${temp_dir}"
+    # shellcheck disable=SC2064
+    trap "rm -rf '${temp_dir}'" EXIT
 
-    local url="https://github.com/${GITHUB_REPO}/releases/download/${version}/${archive_name}"
-    local temp_archive="/tmp/dddns-${version}.tar.gz"
-    local temp_dir="/tmp/dddns-${version}-extract"
-
-    log_info "Downloading from: ${url}"
-
-    if curl -L -o "${temp_archive}" "$url" --progress-bar; then
-        log_info "Extracting archive..."
-
-        # Create temp directory and extract
-        mkdir -p "${temp_dir}"
-        if tar -xzf "${temp_archive}" -C "${temp_dir}"; then
-            # Find and move the binary
-            if [[ -f "${temp_dir}/${BINARY_NAME}" ]]; then
-                chmod +x "${temp_dir}/${BINARY_NAME}"
-                mv "${temp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-                log_success "Binary installed successfully"
-
-                # Cleanup
-                rm -rf "${temp_dir}" "${temp_archive}"
-            else
-                log_error "Binary not found in archive"
-                ls -la "${temp_dir}"
-                rm -rf "${temp_dir}" "${temp_archive}"
-                exit 1
-            fi
-        else
-            log_error "Failed to extract archive"
-            rm -f "${temp_archive}"
-            exit 1
-        fi
-    else
-        log_error "Failed to download from ${url}"
+    log_info "Downloading ${archive_name}..."
+    if ! curl -L -o "${temp_dir}/${archive_name}" "${base_url}/${archive_name}" --progress-bar; then
+        log_error "Failed to download ${archive_name}"
         exit 1
     fi
 
-    # Create symlink
-    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "/usr/local/bin/${BINARY_NAME}"
-}
-
-# Create boot persistence script
-create_boot_script() {
-    log_info "Creating boot persistence script..."
-
-    cat > "${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}" << 'EOF'
-#!/bin/bash
-#
-# dddns Boot Persistence Script
-# Ensures dddns survives reboots and firmware updates
-#
-
-BINARY_PATH="/data/dddns/dddns"
-CONFIG_DIR="/data/.dddns"
-LOG_FILE="/var/log/dddns.log"
-
-# Create symlink if needed
-if [[ -f "$BINARY_PATH" ]] && [[ ! -L "/usr/local/bin/dddns" ]]; then
-    ln -sf "$BINARY_PATH" "/usr/local/bin/dddns"
-fi
-
-# Ensure config directory exists
-if [[ ! -d "$CONFIG_DIR" ]]; then
-    mkdir -p "$CONFIG_DIR"
-    chmod 700 "$CONFIG_DIR"
-fi
-
-# Create/update cron job
-cat > /etc/cron.d/dddns << 'CRON'
-# dddns - Dynamic DNS updater for Route53
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Update DNS every 30 minutes (with timestamp for visibility)
-*/30 * * * * root echo "[$(date '+\%Y-\%m-\%d \%H:\%M:\%S')] Running dddns update..." >> /var/log/dddns.log && /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
-CRON
-
-# Restart cron
-/etc/init.d/cron restart >/dev/null 2>&1
-
-# Log rotation (keep log under 10MB)
-if [[ -f "$LOG_FILE" ]]; then
-    SIZE=$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-    if [[ $SIZE -gt 10485760 ]]; then
-        mv "$LOG_FILE" "$LOG_FILE.old"
-        touch "$LOG_FILE"
+    log_info "Fetching checksums.txt for SHA-256 verification..."
+    if ! curl -fsL -o "${temp_dir}/checksums.txt" "${base_url}/checksums.txt"; then
+        log_error "Could not fetch checksums.txt — refusing to install an unverified binary"
+        exit 1
     fi
-fi
 
-echo "[$(date)] dddns boot script completed" >> /var/log/dddns-boot.log
-EOF
+    local expected
+    expected=$(awk -v name="${archive_name}" '$2 == name {print $1}' "${temp_dir}/checksums.txt")
+    if [[ -z "$expected" ]]; then
+        log_error "${archive_name} not listed in checksums.txt"
+        exit 1
+    fi
+    local actual
+    actual=$(sha256sum "${temp_dir}/${archive_name}" | awk '{print $1}')
+    if [[ "${expected}" != "${actual}" ]]; then
+        log_error "SHA-256 mismatch — binary tampered with or corrupted"
+        log_error "  Expected: ${expected}"
+        log_error "  Got:      ${actual}"
+        exit 1
+    fi
+    log_success "Binary SHA-256 verified"
 
-    chmod +x "${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
-    log_success "Boot script created"
+    log_info "Extracting..."
+    tar -xzf "${temp_dir}/${archive_name}" -C "${temp_dir}" || {
+        log_error "Failed to extract ${archive_name}"
+        exit 1
+    }
+    if [[ ! -f "${temp_dir}/${BINARY_NAME}" ]]; then
+        log_error "Binary ${BINARY_NAME} not present inside ${archive_name}"
+        exit 1
+    fi
+
+    mkdir -p "${INSTALL_DIR}"
+    chmod +x "${temp_dir}/${BINARY_NAME}"
+    mv "${temp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "/usr/local/bin/${BINARY_NAME}"
+    log_success "Binary installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
-# Create default configuration
+# Write a minimal config.yaml for fresh installs. Existing configs are
+# left alone so upgrades don't clobber user settings.
 create_default_config() {
-    # Check if any configuration exists (upgrade scenario)
     if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
-        log_info "Existing configuration detected - preserving user settings"
+        log_info "Existing configuration detected — preserving user settings"
         return 0
     fi
 
-    log_info "Creating default configuration..."
+    log_info "Creating default configuration at ${CONFIG_DIR}/config.yaml"
     mkdir -p "${CONFIG_DIR}"
     chmod 700 "${CONFIG_DIR}"
 
-    cat > "${CONFIG_DIR}/config.yaml" << 'EOF'
+    cat > "${CONFIG_DIR}/config.yaml" <<'EOF'
 # dddns Configuration
 #
-# Update with your AWS credentials and Route53 settings
-# For secure credentials, use: dddns secure --init
+# Edit the values below with your AWS credentials and Route53 settings,
+# then run `dddns config check` to validate. For encrypted-at-rest
+# storage, run `dddns secure enable`.
 
-aws:
-  region: "us-east-1"
-  # Option 1: Use AWS CLI profile (if AWS CLI is installed)
-  # profile: "your-profile-name"
+aws_region: "us-east-1"
+aws_access_key: "YOUR_ACCESS_KEY"
+aws_secret_key: "YOUR_SECRET_KEY"
 
-  # Option 2: Direct credentials (less secure)
-  # access_key_id: "YOUR_ACCESS_KEY"
-  # secret_access_key: "YOUR_SECRET_KEY"
+hosted_zone_id: "YOUR_HOSTED_ZONE_ID"
+hostname: "home.example.com"
+ttl: 300
 
-dns:
-  hosted_zone_id: "YOUR_HOSTED_ZONE_ID"  # e.g., "Z1234567890ABC"
-  hostname: "your.domain.com"            # Domain to update
-  ttl: 300                                # Time-to-live in seconds
-
-operations:
-  ip_cache_file: "/data/.dddns/last-ip.txt"
-  skip_proxy_check: false                # Set true if behind VPN
+ip_cache_file: "/data/.dddns/last-ip.txt"
 EOF
-
     chmod 600 "${CONFIG_DIR}/config.yaml"
-    log_warning "Default configuration created at ${CONFIG_DIR}/config.yaml"
-    log_warning "Please edit it with your AWS credentials and DNS settings"
+    log_warning "Edit ${CONFIG_DIR}/config.yaml before the first update run"
 }
 
-# Setup cron job
-setup_cron() {
-    log_info "Setting up cron job..."
-
-    cat > "${CRON_FILE}" << 'EOF'
-# dddns - Dynamic DNS updater for Route53
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Update DNS every 30 minutes (with timestamp for visibility)
-*/30 * * * * root echo "[$(date '+%Y-%m-%d %H:%M:%S')] Running dddns update..." >> /var/log/dddns.log && /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
-EOF
-
-    # Restart cron
-    /etc/init.d/cron restart >/dev/null 2>&1
-    log_success "Cron job configured"
+# Detect the mode of the existing install by reading the generated boot
+# script's mode marker. Prints "cron", "serve", or empty string.
+detect_current_mode() {
+    [[ -f "${BOOT_SCRIPT}" ]] || { echo ""; return; }
+    if grep -q "^# --- serve mode ---" "${BOOT_SCRIPT}"; then
+        echo "serve"
+    elif grep -q "^# --- cron mode ---" "${BOOT_SCRIPT}"; then
+        echo "cron"
+    elif [[ -f "${CRON_FILE}" ]]; then
+        # Pre-E1 installs wrote /etc/cron.d/dddns inline.
+        echo "cron"
+    fi
 }
 
-# Uninstall function
+prompt_mode() {
+    echo "" >&2
+    echo "Select install mode:" >&2
+    echo "  1) cron  — poll every 30 minutes  [default]" >&2
+    echo "  2) serve — event-driven via the UniFi Dynamic DNS UI" >&2
+    echo "" >&2
+    echo -n "Choose [1]: " >&2
+    local choice
+    read -r choice </dev/tty || choice="1"
+    case "$choice" in
+        2|serve|SERVE) echo "serve" ;;
+        *) echo "cron" ;;
+    esac
+}
+
+# apply_mode delegates boot-script generation to the binary and then
+# runs the script once so the install is effective without a reboot.
+apply_mode() {
+    local mode="$1"
+    local dddns="${INSTALL_DIR}/${BINARY_NAME}"
+    local secret=""
+
+    if [[ "$mode" == "serve" ]]; then
+        log_info "Initializing serve-mode shared secret..."
+        if ! secret=$("${dddns}" config rotate-secret --init --quiet); then
+            log_error "Failed to initialize serve-mode secret"
+            exit 1
+        fi
+    fi
+
+    log_info "Generating boot script (mode=${mode})..."
+    "${dddns}" config set-mode "${mode}" --boot-path "${BOOT_SCRIPT}" >/dev/null
+
+    log_info "Applying boot script..."
+    # The boot script is idempotent — re-running it switches away from
+    # the other mode's artefacts as needed.
+    bash "${BOOT_SCRIPT}" || log_warning "Boot script returned non-zero — check ${LOG_FILE}"
+
+    if [[ "$mode" == "serve" ]]; then
+        print_unifi_ui_values "$secret"
+    fi
+}
+
+print_unifi_ui_values() {
+    local secret="$1"
+    local hostname=""
+    if [[ -f "${CONFIG_DIR}/config.yaml" ]]; then
+        hostname=$(grep -E '^\s*hostname:' "${CONFIG_DIR}/config.yaml" | head -1 | awk -F'"' '{print $2}')
+    fi
+    [[ -z "$hostname" ]] && hostname="<your hostname>"
+
+    local bar
+    bar=$(printf '=%.0s' {1..65})
+    echo ""
+    echo "${bar}"
+    echo "  UniFi UI values"
+    echo "  Settings → Internet → Dynamic DNS → Create"
+    echo "${bar}"
+    echo ""
+    echo "  Service:  Custom"
+    echo "  Hostname: ${hostname}"
+    echo "  Username: dddns"
+    echo "  Password: ${secret}"
+    echo "  Server:   127.0.0.1:53353/nic/update?hostname=%h&myip=%i"
+    echo ""
+    echo "${bar}"
+    echo ""
+    echo "The secret above is written to config (encrypted if you run"
+    echo "'dddns secure enable') and will not be shown again. To rotate,"
+    echo "run 'dddns config rotate-secret' and update the UniFi UI."
+    echo ""
+}
+
 uninstall() {
     log_warning "Uninstalling dddns..."
-
-    # Remove cron job
+    # Stop serve-mode supervision if active.
+    if [ -f "/etc/systemd/system/dddns.service" ]; then
+        systemctl stop dddns.service >/dev/null 2>&1 || true
+        systemctl disable dddns.service >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/dddns.service"
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    # Stop cron-mode updates if active.
     rm -f "${CRON_FILE}"
-    /etc/init.d/cron restart >/dev/null 2>&1
-
-    # Remove boot script
-    rm -f "${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
-
-    # Remove symlink
+    /etc/init.d/cron restart >/dev/null 2>&1 || true
+    # Remove files.
+    rm -f "${BOOT_SCRIPT}"
     rm -f "/usr/local/bin/${BINARY_NAME}"
-
-    # Remove binary
     rm -rf "${INSTALL_DIR}"
-
     log_warning "Configuration preserved at ${CONFIG_DIR}"
     log_info "To remove configuration: rm -rf ${CONFIG_DIR}"
     log_success "dddns uninstalled"
 }
 
-# Main installation
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Options:
+  --mode cron|serve   Install or switch to the specified mode. Default:
+                      preserve current mode on upgrade; prompt on fresh
+                      install.
+  --force             Reinstall the binary even if the current version
+                      matches the latest release.
+  --uninstall         Remove dddns. Preserves configuration.
+  --help              Show this message.
+EOF
+}
+
 main() {
     local action="install"
     local force="false"
+    local mode=""
 
-    # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --uninstall)
-                action="uninstall"
+            --uninstall) action="uninstall"; shift ;;
+            --force)     force="true"; shift ;;
+            --mode)
+                shift
+                [[ $# -eq 0 ]] && { log_error "--mode requires an argument"; exit 1; }
+                mode="$1"
                 shift
                 ;;
-            --force)
-                force="true"
-                shift
-                ;;
-            --help)
-                echo "Usage: $0 [OPTIONS]"
-                echo ""
-                echo "Options:"
-                echo "  --force      Force reinstall"
-                echo "  --uninstall  Remove dddns"
-                echo "  --help       Show this help"
-                exit 0
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                exit 1
-                ;;
+            --mode=*)    mode="${1#*=}"; shift ;;
+            --help)      usage; exit 0 ;;
+            *)           log_error "Unknown option: $1"; usage; exit 1 ;;
         esac
     done
 
-    # Header
+    if [[ -n "$mode" ]] && [[ "$mode" != "cron" ]] && [[ "$mode" != "serve" ]]; then
+        log_error "--mode must be 'cron' or 'serve' (got: '$mode')"
+        exit 1
+    fi
+
     echo ""
     echo "======================================"
-    echo "  dddns Installer for UDM"
+    echo "  dddns Installer for UniFi Dream"
     echo "======================================"
     echo ""
 
-    # Check requirements
     check_root
     detect_arch
     check_udm
 
-    # Handle uninstall
     if [[ "$action" == "uninstall" ]]; then
         uninstall
         exit 0
     fi
 
-    # Detect if this is an upgrade
-    local is_upgrade=false
+    local is_upgrade="false"
     if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
-        is_upgrade=true
+        is_upgrade="true"
     fi
 
-    # Show installation plan and get confirmation (unless --force)
-    if [[ "$force" != "true" ]]; then
-        echo ""
+    # Mode resolution: explicit --mode wins; on upgrade preserve detected
+    # mode; on fresh install prompt (or --force defaults to cron).
+    if [[ -z "$mode" ]]; then
         if [[ "$is_upgrade" == "true" ]]; then
-            log_info "Upgrade detected - existing configuration will be preserved"
-            log_info "Upgrade Plan:"
-            echo "  • Update dddns binary in: /data/dddns/"
-            echo "  • Update symlink at: /usr/local/bin/dddns"
-            echo "  • Update boot persistence script"
-            echo "  • Preserve existing configuration"
+            mode=$(detect_current_mode)
+            if [[ -n "$mode" ]]; then
+                log_info "Upgrade detected — preserving mode: ${mode}"
+            else
+                mode="cron"
+                log_info "Upgrade detected, no prior mode marker — defaulting to cron"
+            fi
+        elif [[ "$force" == "true" ]]; then
+            mode="cron"
         else
-            log_info "Installation Plan:"
-            echo "  • Install dddns binary to: /data/dddns/"
-            echo "  • Create symlink at: /usr/local/bin/dddns"
-            echo "  • Set up boot persistence in: /data/on_boot.d/"
-            echo "  • Configure cron job to run every 30 minutes"
-            echo "  • Create config directory at: /data/.dddns/"
-            echo "  • Log output to: /var/log/dddns.log"
+            mode=$(prompt_mode)
         fi
-        echo ""
-        echo -n "Proceed with installation? [Y/n]: "
-        read -r response </dev/tty || response="y"
+    fi
 
+    if [[ "$force" != "true" ]] && [[ "$is_upgrade" != "true" ]]; then
+        echo ""
+        log_info "Installation plan:"
+        echo "  • Binary:        ${INSTALL_DIR}/${BINARY_NAME}"
+        echo "  • Config:        ${CONFIG_DIR}/config.yaml"
+        echo "  • Boot script:   ${BOOT_SCRIPT}"
+        echo "  • Mode:          ${mode}"
+        echo "  • Log:           ${LOG_FILE}"
+        echo ""
+        echo -n "Proceed? [Y/n]: "
+        local response
+        read -r response </dev/tty || response="y"
         if [[ "$response" =~ ^[Nn] ]]; then
-            log_info "Installation cancelled by user"
+            log_info "Installation cancelled"
             exit 0
         fi
         echo ""
     fi
 
-    # Install unifios-utilities if needed
     install_unifios_utilities
 
-    # Get version and install
-    log_info "Fetching latest version..."
+    log_info "Fetching latest release tag..."
+    local version
     version=$(get_latest_version)
-    log_info "Latest version: $version"
-    install_binary "$version" "$force"
+    log_info "Latest release: ${version}"
 
-    # Setup persistence and configuration
-    create_boot_script
+    install_binary "${version}" "${force}"
     create_default_config
-    setup_cron
+    apply_mode "${mode}"
 
-    # Run boot script to apply immediately
-    log_info "Applying configuration..."
-    "${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
-
-    # Test installation
-    echo ""
-    if "${INSTALL_DIR}/${BINARY_NAME}" --version &>/dev/null; then
-        local installed=$("${INSTALL_DIR}/${BINARY_NAME}" --version)
-        log_success "Installation complete: $installed"
-    else
-        log_error "Installation test failed"
-        exit 1
-    fi
-
-    # Final instructions
     echo ""
     echo "======================================"
     if [[ "$is_upgrade" == "true" ]]; then
-        echo "  Upgrade Complete!"
+        echo "  Upgrade complete (mode=${mode})"
     else
-        echo "  Installation Complete!"
+        echo "  Install complete (mode=${mode})"
     fi
     echo "======================================"
     echo ""
 
-    if [[ "$is_upgrade" == "true" ]]; then
-        echo "Your existing configuration has been preserved."
+    if [[ "$is_upgrade" != "true" ]]; then
+        echo "Next steps:"
+        echo "  1. Edit ${CONFIG_DIR}/config.yaml with your AWS + DNS settings"
+        echo "  2. dddns config check        # validate config"
+        echo "  3. dddns update --dry-run    # sanity-check an update"
+        if [[ "$mode" == "cron" ]]; then
+            echo "  4. tail -f ${LOG_FILE}       # watch the next cron run"
+        else
+            echo "  4. dddns serve test          # exercise the listener"
+            echo "  5. dddns serve status        # see last-request summary"
+        fi
         echo ""
-        echo "Next steps:"
-        echo "1. Test: dddns update --dry-run"
-        echo "2. Monitor: tail -f ${LOG_FILE}"
-    else
-        echo "Next steps:"
-        echo "1. Edit configuration: vi ${CONFIG_DIR}/config.yaml"
-        echo "2. Add your AWS credentials and Route53 settings"
-        echo "3. Test: dddns update --dry-run"
-        echo "4. Monitor: tail -f ${LOG_FILE}"
     fi
-    echo ""
-    echo "The cron job will run every 30 minutes automatically."
-    echo "Logs are rotated automatically when they exceed 10MB."
-    echo ""
 }
 
-# Run main
 main "$@"

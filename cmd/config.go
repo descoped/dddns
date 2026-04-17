@@ -178,19 +178,6 @@ func runInteractiveConfig(configPath string, exists bool) error {
 		_, _ = fmt.Sscanf(ttlStr, "%d", &ttl)
 	}
 
-	// Skip proxy check
-	skipProxyDefault := "no"
-	if cfg.SkipProxy {
-		skipProxyDefault = "yes"
-	}
-	fmt.Printf("Skip proxy/VPN detection? (yes/no) [%s]: ", skipProxyDefault)
-	skipProxyStr, _ := reader.ReadString('\n')
-	skipProxyStr = strings.TrimSpace(strings.ToLower(skipProxyStr))
-	if skipProxyStr == "" {
-		skipProxyStr = skipProxyDefault
-	}
-	skipProxy := skipProxyStr == "yes" || skipProxyStr == "y"
-
 	// Cache file location
 	defaultCache := cfg.IPCacheFile
 	if defaultCache == "" {
@@ -219,8 +206,7 @@ ttl: %d                    # TTL in seconds
 
 # Operational Settings
 ip_cache_file: "%s"  # Where to store last known IP
-skip_proxy_check: %t       # Skip proxy/VPN detection
-`, awsRegion, awsAccessKey, awsSecretKey, hostedZoneID, hostname, ttl, cacheFile, skipProxy)
+`, awsRegion, awsAccessKey, awsSecretKey, hostedZoneID, hostname, ttl, cacheFile)
 
 	// Validate required fields before saving
 	if awsAccessKey == "" || awsSecretKey == "" {
@@ -240,7 +226,6 @@ skip_proxy_check: %t       # Skip proxy/VPN detection
 	fmt.Printf("Hostname: %s\n", hostname)
 	fmt.Printf("TTL: %d\n", ttl)
 	fmt.Printf("Cache File: %s\n", cacheFile)
-	fmt.Printf("Skip Proxy Check: %t\n", skipProxy)
 	fmt.Println()
 
 	// Confirm

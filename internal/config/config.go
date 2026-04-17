@@ -2,31 +2,85 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/profile"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
-// Config holds all configuration for dddns
+// Config holds all configuration for dddns.
 type Config struct {
 	// AWS settings
-	AWSRegion    string `mapstructure:"aws_region"`
-	AWSAccessKey string `mapstructure:"aws_access_key"` // For standalone operation
-	AWSSecretKey string `mapstructure:"aws_secret_key"` // For standalone operation
+	AWSRegion    string `mapstructure:"aws_region"    yaml:"aws_region"`
+	AWSAccessKey string `mapstructure:"aws_access_key" yaml:"aws_access_key"`
+	AWSSecretKey string `mapstructure:"aws_secret_key" yaml:"aws_secret_key"`
 
 	// DNS settings (required)
-	HostedZoneID string `mapstructure:"hosted_zone_id"`
-	Hostname     string `mapstructure:"hostname"`
-	TTL          int64  `mapstructure:"ttl"`
+	HostedZoneID string `mapstructure:"hosted_zone_id" yaml:"hosted_zone_id"`
+	Hostname     string `mapstructure:"hostname"       yaml:"hostname"`
+	TTL          int64  `mapstructure:"ttl"            yaml:"ttl"`
 
 	// Operational settings
-	IPCacheFile string `mapstructure:"ip_cache_file"`
-	SkipProxy   bool   `mapstructure:"skip_proxy_check"`
-	ForceUpdate bool   `mapstructure:"force_update"`
-	DryRun      bool   `mapstructure:"dry_run"`
+	IPCacheFile string `mapstructure:"ip_cache_file" yaml:"ip_cache_file"`
+	ForceUpdate bool   `mapstructure:"force_update"  yaml:"-"`
+	DryRun      bool   `mapstructure:"dry_run"       yaml:"-"`
+
+	// IPSource overrides where dddns obtains the current public IP.
+	// Values: "" or "auto" (mode-driven default), "local" (read the WAN
+	// interface), "remote" (call checkip.amazonaws.com). Serve mode always
+	// reads the local interface regardless of this setting.
+	IPSource string `mapstructure:"ip_source" yaml:"ip_source,omitempty"`
+
+	// Server holds parameters for serve mode (dddns serve). nil when the
+	// `server:` block is absent from the config file, which disables serve
+	// mode. See ServerConfig for fields.
+	Server *ServerConfig `mapstructure:"server" yaml:"server,omitempty"`
+}
+
+// ServerConfig holds parameters for serve mode (dddns serve).
+//
+// The same struct is used by the plaintext Config (via mapstructure/viper)
+// and will be used by SecureConfig (via yaml.v3) — hence both tag sets.
+// The encrypted equivalent of SharedSecret lives in a sibling struct in
+// secure_config.go so the two wire formats stay explicit.
+type ServerConfig struct {
+	Bind          string   `mapstructure:"bind"           yaml:"bind"`
+	SharedSecret  string   `mapstructure:"shared_secret"  yaml:"shared_secret,omitempty"`
+	AllowedCIDRs  []string `mapstructure:"allowed_cidrs"  yaml:"allowed_cidrs"`
+	AuditLog      string   `mapstructure:"audit_log"      yaml:"audit_log,omitempty"`
+	OnAuthFailure string   `mapstructure:"on_auth_failure" yaml:"on_auth_failure,omitempty"`
+	WANInterface  string   `mapstructure:"wan_interface"  yaml:"wan_interface,omitempty"`
+}
+
+// Validate reports whether the server block is well-formed. It is called
+// by `dddns serve` before binding, and by `dddns config set-mode serve`
+// before rewriting the boot script. The cron path does not need to call
+// this — Config.Validate ignores the server block when the user only
+// runs `dddns update`.
+func (s *ServerConfig) Validate() error {
+	if s.Bind == "" {
+		return fmt.Errorf("server.bind is required")
+	}
+	if _, _, err := net.SplitHostPort(s.Bind); err != nil {
+		return fmt.Errorf("server.bind %q is not host:port: %w", s.Bind, err)
+	}
+	if s.SharedSecret == "" {
+		return fmt.Errorf("server.shared_secret is required (or server.secret_vault in secure config)")
+	}
+	if len(s.AllowedCIDRs) == 0 {
+		return fmt.Errorf("server.allowed_cidrs must be non-empty (fail-closed)")
+	}
+	for _, c := range s.AllowedCIDRs {
+		if _, _, err := net.ParseCIDR(c); err != nil {
+			return fmt.Errorf("server.allowed_cidrs: %q is not a valid CIDR: %w", c, err)
+		}
+	}
+	return nil
 }
 
 // Load reads configuration from file and environment
@@ -49,7 +103,6 @@ func Load() (*Config, error) {
 		AWSRegion:   "us-east-1",
 		TTL:         300,
 		IPCacheFile: profile.Current.GetCachePath(),
-		SkipProxy:   false,
 		ForceUpdate: false,
 		DryRun:      false,
 	}
@@ -70,7 +123,8 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Validate checks if the configuration is valid
+// Validate checks the top-level Config. It does not validate the Server
+// block — that is ServerConfig.Validate's job, called by `dddns serve`.
 func (c *Config) Validate() error {
 	// AWS credentials are required for security (no env vars allowed)
 	if c.AWSAccessKey == "" {
@@ -87,6 +141,31 @@ func (c *Config) Validate() error {
 	}
 	if c.TTL <= 0 {
 		return fmt.Errorf("ttl must be positive")
+	}
+	switch c.IPSource {
+	case "", "auto", "local", "remote":
+		// ok
+	default:
+		return fmt.Errorf("ip_source %q must be one of: auto, local, remote", c.IPSource)
+	}
+	return nil
+}
+
+// SavePlaintext serializes cfg to YAML and writes it to path with the
+// standard plaintext permissions (0600). This rewrites the entire file;
+// comments and formatting in any previous version are discarded.
+//
+// Use SaveSecure for encrypted-at-rest storage.
+func SavePlaintext(cfg *Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), constants.ConfigDirPerm); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, constants.ConfigFilePerm); err != nil {
+		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
 }
@@ -106,11 +185,10 @@ ttl: 300                 # TTL in seconds
 
 # Operational Settings
 ip_cache_file: "%s"  # Where to store last known IP
-skip_proxy_check: false                   # Skip proxy/VPN detection
 `
 
 	// Create directory if needed
-	dir := path[:len(path)-len("/config.yaml")]
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, constants.ConfigDirPerm); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}

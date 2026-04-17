@@ -5,4 +5,3 @@ hosted_zone_id: "Z1234567890ABC"
 hostname: "test.example.com"
 ttl: 600
 ip_cache_file: "/tmp/test-dddns-cache.txt"
-skip_proxy_check: true

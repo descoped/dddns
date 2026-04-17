@@ -1,9 +1,9 @@
 package myip
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,7 +14,8 @@ var httpClient = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
-// GetPublicIP retrieves the public IP for current network
+// GetPublicIP retrieves the public IP for current network from checkip.amazonaws.com
+// and validates that it's a usable public IPv4 address.
 func GetPublicIP() (string, error) {
 	resp, err := httpClient.Get("https://checkip.amazonaws.com")
 	if err != nil {
@@ -24,48 +25,33 @@ func GetPublicIP() (string, error) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read geoLocation stream: %w", err)
+		return "", fmt.Errorf("failed to read public ip response: %w", err)
 	}
 
-	return strings.Trim(string(body), "\n"), nil
+	ip := strings.TrimSpace(string(body))
+	if err := ValidatePublicIP(ip); err != nil {
+		return "", fmt.Errorf("checkip returned unusable IP: %w", err)
+	}
+	return ip, nil
 }
 
-// geoLocation represents the response from ip-api.com for proxy detection.
-type geoLocation struct {
-	//query  string `json:"query"`
-	//status string `json:"status"`
-	Proxy bool `json:"proxy"`
-}
-
-// IsProxyIP checks whether public-ip actually is a proxy-public-ip, using geo location api
-func IsProxyIP(ip *string) (bool, error) {
-	if ip == nil {
-		return false, fmt.Errorf("ip cannot be nil")
+// ValidatePublicIP rejects addresses that are not suitable for a public DNS
+// A record: malformed, IPv6, loopback, link-local, unspecified, multicast, or
+// private (RFC1918). Returns nil when the string parses to a publicly-
+// routable unicast IPv4 address.
+func ValidatePublicIP(ip string) error {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return fmt.Errorf("invalid IP address: %q", ip)
 	}
-	resp, err := httpClient.Get(fmt.Sprintf("https://ip-api.com/json/%s?fields=query,status,proxy", *ip))
-	if err != nil {
-		return false, fmt.Errorf("http check if-public-ip-is-proxy error: %w", err)
+	if parsed.To4() == nil {
+		return fmt.Errorf("IPv6 not supported (got %q); dddns is IPv4-only", ip)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, fmt.Errorf("failed to read geoLocation stream: %w", err)
+	if !parsed.IsGlobalUnicast() {
+		return fmt.Errorf("IP is not globally unicast: %q", ip)
 	}
-
-	location, err := toJSON(body)
-	if err != nil {
-		return false, err
+	if parsed.IsPrivate() {
+		return fmt.Errorf("IP is in a private (RFC1918) range: %q", ip)
 	}
-
-	return location.Proxy, nil
-}
-
-// toJSON unmarshals the JSON response into a geoLocation struct.
-func toJSON(body []byte) (geoLocation, error) {
-	var location geoLocation
-	if err := json.Unmarshal(body, &location); err != nil {
-		return location, fmt.Errorf("error decoding json geoLocation: %w", err)
-	}
-	return location, nil
+	return nil
 }

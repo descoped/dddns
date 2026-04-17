@@ -1,7 +1,9 @@
 package crypto_test
 
 import (
+	"encoding/base64"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/descoped/dddns/internal/crypto"
@@ -204,6 +206,51 @@ func TestEncryptionWithDifferentKeys(t *testing.T) {
 	// in the current implementation. In production, different devices would have
 	// different keys and encrypted data would not be portable.
 	t.Skip("Cannot test different device keys without mocking")
+}
+
+// TestEncryptDecryptString_RoundTrip directly exercises the EncryptString /
+// DecryptString primitives (introduced when EncryptCredentials was
+// refactored to wrap them) with a range of input shapes.
+func TestEncryptDecryptString_RoundTrip(t *testing.T) {
+	cases := []string{
+		"",
+		"hello",
+		"value with spaces, :colons:, and\nnewlines",
+		strings.Repeat("x", 4096),
+	}
+	for _, in := range cases {
+		enc, err := crypto.EncryptString(in)
+		if err != nil {
+			t.Fatalf("EncryptString(len=%d) failed: %v", len(in), err)
+		}
+		got, err := crypto.DecryptString(enc)
+		if err != nil {
+			t.Fatalf("DecryptString failed: %v", err)
+		}
+		if got != in {
+			t.Errorf("round-trip mismatch: got %q want %q", got, in)
+		}
+	}
+}
+
+// TestDecrypt_TamperedCiphertext_Fails verifies AES-GCM's authentication
+// tag rejects modified ciphertext (single-bit flip in the last byte,
+// which is part of the tag).
+func TestDecrypt_TamperedCiphertext_Fails(t *testing.T) {
+	enc, err := crypto.EncryptString("secret payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[len(raw)-1] ^= 0xFF
+	tampered := base64.StdEncoding.EncodeToString(raw)
+
+	if _, err := crypto.DecryptString(tampered); err == nil {
+		t.Error("expected decryption to fail for tampered ciphertext")
+	}
 }
 
 func BenchmarkEncryptCredentials(b *testing.B) {

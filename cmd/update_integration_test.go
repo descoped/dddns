@@ -19,8 +19,7 @@ aws_region: "us-east-1"
 hosted_zone_id: "Z123456"
 hostname: "test.example.com"
 ttl: 300
-ip_cache_file: "` + cacheFile + `"
-skip_proxy_check: true`
+ip_cache_file: "` + cacheFile + `"`
 
 	err := os.WriteFile(configPath, []byte(configContent), 0600)
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SecureConfig stores credentials in encrypted form
+// SecureConfig stores credentials in encrypted form.
 type SecureConfig struct {
 	// AWS settings
 	AWSRegion           string `yaml:"aws_region"`
@@ -23,7 +23,22 @@ type SecureConfig struct {
 
 	// Operational settings
 	IPCacheFile string `yaml:"ip_cache_file"`
-	SkipProxy   bool   `yaml:"skip_proxy_check"`
+	IPSource    string `yaml:"ip_source,omitempty"`
+
+	// Server holds the serve-mode parameters. SecretVault is the encrypted
+	// form of the plaintext ServerConfig.SharedSecret.
+	Server *SecureServerConfig `yaml:"server,omitempty"`
+}
+
+// SecureServerConfig is the at-rest form of ServerConfig with the shared
+// secret replaced by a device-encrypted vault.
+type SecureServerConfig struct {
+	Bind          string   `yaml:"bind"`
+	SecretVault   string   `yaml:"secret_vault"`
+	AllowedCIDRs  []string `yaml:"allowed_cidrs"`
+	AuditLog      string   `yaml:"audit_log,omitempty"`
+	OnAuthFailure string   `yaml:"on_auth_failure,omitempty"`
+	WANInterface  string   `yaml:"wan_interface,omitempty"`
 }
 
 // SaveSecure saves config with encrypted credentials
@@ -42,7 +57,23 @@ func SaveSecure(cfg *Config, path string) error {
 		Hostname:            cfg.Hostname,
 		TTL:                 cfg.TTL,
 		IPCacheFile:         cfg.IPCacheFile,
-		SkipProxy:           cfg.SkipProxy,
+		IPSource:            cfg.IPSource,
+	}
+
+	// Encrypt the server block if present.
+	if cfg.Server != nil {
+		secretVault, err := crypto.EncryptString(cfg.Server.SharedSecret)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt server.shared_secret: %w", err)
+		}
+		secureCfg.Server = &SecureServerConfig{
+			Bind:          cfg.Server.Bind,
+			SecretVault:   secretVault,
+			AllowedCIDRs:  cfg.Server.AllowedCIDRs,
+			AuditLog:      cfg.Server.AuditLog,
+			OnAuthFailure: cfg.Server.OnAuthFailure,
+			WANInterface:  cfg.Server.WANInterface,
+		}
 	}
 
 	// Marshal to YAML
@@ -57,11 +88,22 @@ func SaveSecure(cfg *Config, path string) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Write with secure permissions (read-only)
+	// When re-writing over an existing .secure file, its 0400 perms
+	// prevent os.WriteFile from truncating it. Chmod back to owner-
+	// writable first; the final chmod below restores 0400.
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm() == constants.SecureConfigPerm {
+		if err := os.Chmod(path, constants.ConfigFilePerm); err != nil {
+			return fmt.Errorf("chmod secure config for rewrite: %w", err)
+		}
+	}
+
 	if err := os.WriteFile(path, data, constants.SecureConfigPerm); err != nil {
 		return fmt.Errorf("failed to write config: %w", err)
 	}
-
+	// Ensure the final perm is 0400 even if the file pre-existed at 0600.
+	if err := os.Chmod(path, constants.SecureConfigPerm); err != nil {
+		return fmt.Errorf("chmod secure config: %w", err)
+	}
 	return nil
 }
 
@@ -96,6 +138,23 @@ func LoadSecure(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to decrypt credentials: %w", err)
 	}
 
+	// Decrypt the server block if present.
+	var serverCfg *ServerConfig
+	if secureCfg.Server != nil {
+		sharedSecret, err := crypto.DecryptString(secureCfg.Server.SecretVault)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt server.secret_vault: %w", err)
+		}
+		serverCfg = &ServerConfig{
+			Bind:          secureCfg.Server.Bind,
+			SharedSecret:  sharedSecret,
+			AllowedCIDRs:  secureCfg.Server.AllowedCIDRs,
+			AuditLog:      secureCfg.Server.AuditLog,
+			OnAuthFailure: secureCfg.Server.OnAuthFailure,
+			WANInterface:  secureCfg.Server.WANInterface,
+		}
+	}
+
 	// Return regular config
 	return &Config{
 		AWSRegion:    secureCfg.AWSRegion,
@@ -105,7 +164,8 @@ func LoadSecure(path string) (*Config, error) {
 		Hostname:     secureCfg.Hostname,
 		TTL:          secureCfg.TTL,
 		IPCacheFile:  secureCfg.IPCacheFile,
-		SkipProxy:    secureCfg.SkipProxy,
+		IPSource:     secureCfg.IPSource,
+		Server:       serverCfg,
 	}, nil
 }
 

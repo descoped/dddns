@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -53,12 +54,12 @@ func NewRoute53Client(region, accessKey, secretKey, hostedZoneID, hostname strin
 	}, nil
 }
 
-// GetCurrentIP retrieves the current IP address for the configured hostname
-func (r *Route53Client) GetCurrentIP() (string, error) {
-	ctx := context.TODO()
+// GetCurrentIP retrieves the current IP address for the configured hostname.
+// ctx is honored on the Route53 API call.
+func (r *Route53Client) GetCurrentIP(ctx context.Context) (string, error) {
 	// Ensure hostname ends with a dot for Route53
 	fqdn := r.hostname
-	if fqdn[len(fqdn)-1] != '.' {
+	if !strings.HasSuffix(fqdn, ".") {
 		fqdn = fqdn + "."
 	}
 
@@ -86,17 +87,17 @@ func (r *Route53Client) GetCurrentIP() (string, error) {
 	return "", fmt.Errorf("A record not found for %s", r.hostname) //nolint:staticcheck // "A record" is a DNS term, not an article
 }
 
-// UpdateIP updates the A record with a new IP address
-func (r *Route53Client) UpdateIP(newIP string, dryRun bool) error {
+// UpdateIP updates the A record with a new IP address.
+// ctx is honored on the Route53 API call.
+func (r *Route53Client) UpdateIP(ctx context.Context, newIP string, dryRun bool) error {
 	if dryRun {
 		fmt.Printf("[DRY RUN] Would update %s to %s\n", r.hostname, newIP)
 		return nil
 	}
 
-	ctx := context.TODO()
 	// Ensure hostname ends with a dot for Route53
 	fqdn := r.hostname
-	if fqdn[len(fqdn)-1] != '.' {
+	if !strings.HasSuffix(fqdn, ".") {
 		fqdn = fqdn + "."
 	}
 

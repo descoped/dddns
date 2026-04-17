@@ -97,10 +97,14 @@ func initConfig() {
 			os.Exit(1)
 		}
 	} else if err := viper.ReadInConfig(); err != nil {
-		// Config file not found is okay for now, we'll use defaults
+		// Config file not found is okay — the user may be about to create one via
+		// `dddns config init`. Any other error (YAML syntax, permissions, I/O) is
+		// fatal: silently continuing would cause a downstream "aws_access_key is
+		// required" error that hides the real cause.
 		var configNotFoundErr viper.ConfigFileNotFoundError
 		if !errors.As(err, &configNotFoundErr) {
 			_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
+			os.Exit(1)
 		}
 	}
 

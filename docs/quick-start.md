@@ -6,7 +6,7 @@ Get dddns up and running in 5 minutes!
 
 Before you begin, you'll need:
 
-1. **AWS Account** with Route53 hosted zone (see [AWS Setup Guide](AWS_SETUP.md))
+1. **AWS Account** with Route53 hosted zone (see [AWS Setup Guide](aws-setup.md))
 2. **Domain name** managed by Route53
 3. **AWS credentials** with Route53 permissions
 4. **Root access** to your device (for UDM) or sudo access (for Linux/macOS)
@@ -73,7 +73,6 @@ ttl: 300
 
 # Operational Settings
 ip_cache_file: "/tmp/dddns-last-ip.txt"
-skip_proxy_check: false
 ```
 
 **Important**: The config file must have restricted permissions (600):
@@ -174,9 +173,9 @@ dddns --version
 
 ## What's Next?
 
-- Read the [Configuration Guide](CONFIGURATION.md) for advanced settings
-- Check [Troubleshooting](TROUBLESHOOTING.md) if you encounter issues
-- For UDM users, see the [UDM Guide](UDM_GUIDE.md) for device-specific information
+- Read the [Configuration Guide](configuration.md) for advanced settings
+- Check [Troubleshooting](troubleshooting.md) if you encounter issues
+- For UDM users, see the [UDM Guide](udm-guide.md) for device-specific information
 
 ## Need Help?
 
@@ -185,5 +184,5 @@ If you run into issues:
 1. Check the logs: `tail -f /var/log/dddns.log`
 2. Run with dry-run: `dddns update --dry-run`
 3. Verify AWS credentials: `aws route53 list-hosted-zones --profile dddns`
-4. See [Troubleshooting Guide](TROUBLESHOOTING.md)
-5. For AWS setup help, see [AWS Setup Guide](AWS_SETUP.md)
+4. See [Troubleshooting Guide](troubleshooting.md)
+5. For AWS setup help, see [AWS Setup Guide](aws-setup.md)

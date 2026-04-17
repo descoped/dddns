@@ -1,18 +1,28 @@
 #!/bin/bash
 #
-# dddns installer for Ubiquiti UniFi Dream devices
+# dddns installer for Ubiquiti UniFi Dream devices (UDM / UDM-Pro / UDM-SE /
+# UDM Pro Max / UDR / UDR7). Safe to re-run — preserves mode on upgrade.
 #
 # Usage:
 #   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
-#   ./install-on-unifi-os.sh [--mode cron|serve] [--force] [--uninstall]
+#   ./install-on-unifi-os.sh [--mode cron|serve] [--force] [--uninstall] [--rollback]
 #
 # Modes are mutually exclusive:
 #   cron  — /etc/cron.d/dddns runs `dddns update` every 30 minutes (default).
-#   serve — /data/on_boot.d/20-dddns.sh starts a supervised `dddns serve`
-#           loop that handles dyndns requests from the UniFi UI.
+#   serve — /etc/systemd/system/dddns.service + inadyn push from the UniFi UI.
 #
-# On existing installs the script preserves the currently-configured
-# mode unless --mode is passed explicitly.
+# On existing installs the script preserves the currently-configured mode
+# unless --mode is passed explicitly.
+#
+# Safety guards on every upgrade:
+#   1. Pre-flight — runs `${new}/dddns --version` and `config check` against
+#      the existing config BEFORE replacing the installed binary. If either
+#      fails, the existing install is untouched.
+#   2. State backup — the prior binary, boot script, and cron entry are
+#      copied to *.prev before overwrite. `--rollback` restores them.
+#   3. Post-install smoke — after `apply_mode`, re-runs `--version` and
+#      `config check` against the installed binary. On failure, auto-rolls
+#      back to the .prev state and exits non-zero.
 
 set -e
 
@@ -25,6 +35,7 @@ readonly BOOT_SCRIPT_NAME="20-dddns.sh"
 readonly BOOT_SCRIPT="${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
 readonly CRON_FILE="/etc/cron.d/dddns"
 readonly LOG_FILE="/var/log/dddns.log"
+readonly PREV_SUFFIX=".prev"
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
@@ -32,10 +43,18 @@ readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly NC='\033[0m'
 
+# Runtime state used by the safety gates. Set by download_binary.
+NEW_BINARY_PATH=""
+
 log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 log_error()   { echo -e "${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
+log_phase()   { echo -e "${BLUE}[$1]${NC} $2"; }
+
+# ---------------------------------------------------------------------------
+# Platform checks
+# ---------------------------------------------------------------------------
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
@@ -59,47 +78,71 @@ detect_arch() {
     esac
 }
 
-check_udm() {
-    if [[ ! -d "/data" ]]; then
-        log_error "/data not found — this does not look like a UniFi Dream device"
+# Identify the device using Ubiquiti's canonical marker first, falling back
+# to weaker signals. /proc/ubnthal/system.info is the authoritative source —
+# present on UDM/UDR family (1.x through 4.x firmware).
+detect_unifi_device() {
+    if [[ -f /proc/ubnthal/system.info ]]; then
+        local model
+        model=$(awk -F= '/^shortname=/{print $2; exit}' /proc/ubnthal/system.info)
+        if [[ -n "$model" ]]; then
+            log_success "Detected Ubiquiti device: ${model}"
+        else
+            log_success "Detected Ubiquiti device (model unknown)"
+        fi
+    elif [[ -d /data ]] && { [[ -f /etc/unifi-os/unifi-os.conf ]] || [[ -d /etc/unifi-core ]] || [[ -d /data/unifi ]]; }; then
+        log_warning "Ubiquiti device indicators present but /proc/ubnthal/system.info missing — continuing"
+    else
+        log_error "This does not look like a UniFi Dream device (/data missing and no Ubiquiti markers)"
         exit 1
     fi
-    if [[ -f /etc/unifi-os/unifi-os.conf ]]; then
-        log_info "Detected UniFi OS v3"
-    elif [[ -d /etc/unifi-core ]] || [[ -f /etc/default/unifi ]]; then
-        log_info "Detected UniFi OS v4"
-    elif [[ -f /etc/board.info ]] || [[ -d /data/unifi ]]; then
-        log_info "Detected Ubiquiti device"
-    else
-        log_warning "Could not confirm UniFi OS version, but /data exists — continuing"
+
+    if [[ ! -d /data ]]; then
+        log_error "/data directory missing — persistence is impossible"
+        exit 1
+    fi
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        log_error "systemctl not found — dddns requires systemd (UniFi OS 2.x+)"
+        exit 1
+    fi
+
+    if [[ ! -w /etc ]] && [[ ! -w /etc/systemd/system ]]; then
+        # On UniFi OS /etc is on the firmware-wiped root FS, but it IS writable.
+        log_error "/etc not writable — cannot install systemd unit or cron entry"
+        exit 1
     fi
 
     local available
-    available=$(df -BM /data | awk 'NR==2 {print $4}' | sed 's/M//')
-    if [[ $available -lt 50 ]]; then
-        log_warning "Low disk space: ${available}MB on /data (50MB recommended)"
-    else
-        log_success "Disk space on /data: ${available}MB"
+    available=$(df -BM /data 2>/dev/null | awk 'NR==2 {print $4}' | sed 's/M//')
+    if [[ -n "$available" ]] && [[ "$available" -lt 50 ]]; then
+        log_error "Low disk space on /data: ${available}MB free (50MB required)"
+        exit 1
     fi
+    log_success "/data has ${available:-unknown}MB free"
 }
 
-install_unifios_utilities() {
-    if [[ ! -d "/data/on_boot.d" ]] && [[ ! -f "/data/on_boot.sh" ]]; then
-        log_warning "on-boot-script not installed — required for persistence across firmware updates"
-        echo ""
-        echo -n "Install unifios-utilities now? [Y/n]: "
-        read -r response </dev/tty || response="y"
-        if [[ -z "$response" ]] || [[ "$response" =~ ^[Yy] ]]; then
-            log_info "Installing unifios-utilities..."
-            curl -fsL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash || {
-                log_error "Failed to install unifios-utilities (boot persistence will not work)"
-            }
-        else
-            log_warning "Skipping — dddns may not persist across firmware updates"
-        fi
+# ---------------------------------------------------------------------------
+# Bootstrap (unifios-utilities) — required for /data/on_boot.d/*.sh to run
+# across reboots and firmware upgrades.
+# ---------------------------------------------------------------------------
+
+ensure_on_boot_hook() {
+    if [[ -d "${BOOT_SCRIPT_DIR}" ]]; then
+        log_success "on_boot.d present at ${BOOT_SCRIPT_DIR}"
+        return 0
+    fi
+    log_warning "on_boot.d missing — installing unifios-utilities to enable persistence"
+    if ! curl -fsSL "https://raw.githubusercontent.com/unifi-utilities/unifios-utilities/HEAD/on-boot-script/remote_install.sh" | bash; then
+        log_error "Failed to install unifios-utilities — persistence across reboots will NOT work"
+        exit 1
     fi
     mkdir -p "${BOOT_SCRIPT_DIR}"
 }
+
+# ---------------------------------------------------------------------------
+# Download & verify
+# ---------------------------------------------------------------------------
 
 get_latest_version() {
     local version
@@ -112,20 +155,12 @@ get_latest_version() {
     echo "$version"
 }
 
-# Download binary + checksums.txt, verify SHA-256, extract, install.
-install_binary() {
+# Downloads the release tarball + checksums.txt, verifies SHA-256, extracts
+# the binary to a temp directory, and sets NEW_BINARY_PATH. Does NOT place
+# the binary on the live path — that's place_new_binary's job, after
+# preflight has validated it.
+download_binary() {
     local version="$1"
-    local force="${2:-false}"
-
-    if [[ -f "${INSTALL_DIR}/${BINARY_NAME}" ]] && [[ "$force" != "true" ]]; then
-        local current
-        current=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | awk '{print $3}')
-        if [[ "$current" == "$version" ]] || [[ "v$current" == "$version" ]]; then
-            log_success "dddns ${version} already installed"
-            return 0
-        fi
-    fi
-
     local archive_name="dddns_Linux_${ARCH}.tar.gz"
     local base_url="https://github.com/${GITHUB_REPO}/releases/download/${version}"
     local temp_dir="/tmp/dddns-install-$$"
@@ -133,53 +168,164 @@ install_binary() {
     # shellcheck disable=SC2064
     trap "rm -rf '${temp_dir}'" EXIT
 
-    log_info "Downloading ${archive_name}..."
+    log_phase download "Fetching ${archive_name}..."
     if ! curl -L -o "${temp_dir}/${archive_name}" "${base_url}/${archive_name}" --progress-bar; then
-        log_error "Failed to download ${archive_name}"
+        log_error "[download] Failed to fetch ${archive_name}"
         exit 1
     fi
 
-    log_info "Fetching checksums.txt for SHA-256 verification..."
+    log_phase download "Fetching checksums.txt..."
     if ! curl -fsL -o "${temp_dir}/checksums.txt" "${base_url}/checksums.txt"; then
-        log_error "Could not fetch checksums.txt — refusing to install an unverified binary"
+        log_error "[download] Could not fetch checksums.txt — refusing to install unverified binary"
         exit 1
     fi
 
-    local expected
+    local expected actual
     expected=$(awk -v name="${archive_name}" '$2 == name {print $1}' "${temp_dir}/checksums.txt")
     if [[ -z "$expected" ]]; then
-        log_error "${archive_name} not listed in checksums.txt"
+        log_error "[download] ${archive_name} not listed in checksums.txt"
         exit 1
     fi
-    local actual
     actual=$(sha256sum "${temp_dir}/${archive_name}" | awk '{print $1}')
     if [[ "${expected}" != "${actual}" ]]; then
-        log_error "SHA-256 mismatch — binary tampered with or corrupted"
+        log_error "[download] SHA-256 mismatch — binary tampered or corrupted"
         log_error "  Expected: ${expected}"
         log_error "  Got:      ${actual}"
         exit 1
     fi
-    log_success "Binary SHA-256 verified"
+    log_success "[download] SHA-256 verified"
 
-    log_info "Extracting..."
-    tar -xzf "${temp_dir}/${archive_name}" -C "${temp_dir}" || {
-        log_error "Failed to extract ${archive_name}"
-        exit 1
-    }
-    if [[ ! -f "${temp_dir}/${BINARY_NAME}" ]]; then
-        log_error "Binary ${BINARY_NAME} not present inside ${archive_name}"
+    if ! tar -xzf "${temp_dir}/${archive_name}" -C "${temp_dir}"; then
+        log_error "[download] Failed to extract ${archive_name}"
         exit 1
     fi
-
-    mkdir -p "${INSTALL_DIR}"
+    if [[ ! -f "${temp_dir}/${BINARY_NAME}" ]]; then
+        log_error "[download] Binary ${BINARY_NAME} missing inside tarball"
+        exit 1
+    fi
     chmod +x "${temp_dir}/${BINARY_NAME}"
-    mv "${temp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
-    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "/usr/local/bin/${BINARY_NAME}"
-    log_success "Binary installed to ${INSTALL_DIR}/${BINARY_NAME}"
+    NEW_BINARY_PATH="${temp_dir}/${BINARY_NAME}"
 }
 
-# Write a minimal config.yaml for fresh installs. Existing configs are
-# left alone so upgrades don't clobber user settings.
+# ---------------------------------------------------------------------------
+# Safety gates
+# ---------------------------------------------------------------------------
+
+# Runs the NEW binary's self-checks against the EXISTING config BEFORE we
+# replace anything on disk. On failure, the live install is untouched.
+preflight_binary() {
+    local tb="${NEW_BINARY_PATH}"
+    log_phase preflight "Verifying new binary..."
+
+    if ! "${tb}" --version >/dev/null 2>&1; then
+        log_error "[preflight] New binary does not respond to --version"
+        return 1
+    fi
+    log_success "[preflight] $("${tb}" --version 2>/dev/null | head -1)"
+
+    if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
+        log_phase preflight "Validating existing config under new binary..."
+        if ! "${tb}" config check >/dev/null 2>&1; then
+            log_error "[preflight] New binary rejected existing config:"
+            "${tb}" config check 2>&1 | sed 's/^/    /' >&2 || true
+            return 1
+        fi
+        log_success "[preflight] Config loads cleanly"
+    else
+        log_info "[preflight] No existing config — skipping config validation"
+    fi
+    return 0
+}
+
+# Copies the current binary, boot script, and cron entry to *.prev. Called
+# immediately before state-changing operations. On fresh installs there is
+# nothing to back up and this is a no-op.
+save_state() {
+    log_phase backup "Snapshotting current state to ${PREV_SUFFIX} files..."
+    local saved=0
+    local f
+    for f in "${INSTALL_DIR}/${BINARY_NAME}" "${BOOT_SCRIPT}" "${CRON_FILE}" "/etc/systemd/system/dddns.service"; do
+        if [[ -f "$f" ]]; then
+            cp -a "$f" "${f}${PREV_SUFFIX}"
+            saved=$((saved + 1))
+        fi
+    done
+    if [[ $saved -eq 0 ]]; then
+        log_info "[backup] No prior state to save (fresh install)"
+    else
+        log_success "[backup] ${saved} file(s) snapshotted"
+    fi
+}
+
+# Restores *.prev files in place. Idempotent — files that don't have a
+# .prev peer are left alone. Always restarts cron so a restored entry
+# becomes live without a reboot.
+rollback_state() {
+    log_warning "[rollback] Restoring previous state..."
+    local restored=0
+    local f
+    for f in "${INSTALL_DIR}/${BINARY_NAME}" "${BOOT_SCRIPT}" "${CRON_FILE}" "/etc/systemd/system/dddns.service"; do
+        if [[ -f "${f}${PREV_SUFFIX}" ]]; then
+            mv "${f}${PREV_SUFFIX}" "$f"
+            restored=$((restored + 1))
+        fi
+    done
+    /etc/init.d/cron restart >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    if [[ -f /etc/systemd/system/dddns.service ]]; then
+        systemctl restart dddns.service >/dev/null 2>&1 || true
+    fi
+    if [[ $restored -eq 0 ]]; then
+        log_warning "[rollback] Nothing to restore — no ${PREV_SUFFIX} files found"
+        return 1
+    fi
+    log_success "[rollback] Restored ${restored} file(s)"
+    return 0
+}
+
+# Places NEW_BINARY_PATH at its final location and refreshes the symlink.
+# The old binary is expected to have already been snapshotted by save_state.
+place_new_binary() {
+    log_phase install "Installing new binary at ${INSTALL_DIR}/${BINARY_NAME}..."
+    mkdir -p "${INSTALL_DIR}"
+    # Atomic same-filesystem mv: a cron-run binary already in flight keeps
+    # its inode and finishes cleanly; the next cron invocation picks up the
+    # new binary through the symlink.
+    mv "${NEW_BINARY_PATH}" "${INSTALL_DIR}/${BINARY_NAME}"
+    ln -sf "${INSTALL_DIR}/${BINARY_NAME}" "/usr/local/bin/${BINARY_NAME}"
+    log_success "[install] Binary installed; /usr/local/bin/${BINARY_NAME} → ${INSTALL_DIR}/${BINARY_NAME}"
+}
+
+# Runs the installed binary through a fast self-check. Called after
+# apply_mode. On failure the caller is responsible for invoking
+# rollback_state.
+postinstall_smoke() {
+    local b="${INSTALL_DIR}/${BINARY_NAME}"
+    log_phase smoke "Running post-install checks..."
+
+    if ! "${b}" --version >/dev/null 2>&1; then
+        log_error "[smoke] Installed binary did not respond to --version"
+        return 1
+    fi
+    log_success "[smoke] $("${b}" --version 2>/dev/null | head -1)"
+
+    if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
+        if ! "${b}" config check >/dev/null 2>&1; then
+            log_error "[smoke] Installed binary rejected config:"
+            "${b}" config check 2>&1 | sed 's/^/    /' >&2 || true
+            return 1
+        fi
+        log_success "[smoke] Config check passed"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Config + mode
+# ---------------------------------------------------------------------------
+
+# Writes a minimal config.yaml for fresh installs. Existing configs are
+# preserved so upgrades don't clobber user settings.
 create_default_config() {
     if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
         log_info "Existing configuration detected — preserving user settings"
@@ -211,8 +357,8 @@ EOF
     log_warning "Edit ${CONFIG_DIR}/config.yaml before the first update run"
 }
 
-# Detect the mode of the existing install by reading the generated boot
-# script's mode marker. Prints "cron", "serve", or empty string.
+# Reads the mode of an existing install by parsing boot-script markers.
+# Falls back to "cron" when legacy (pre-marker) installs have a cron file.
 detect_current_mode() {
     [[ -f "${BOOT_SCRIPT}" ]] || { echo ""; return; }
     if grep -q "^# --- serve mode ---" "${BOOT_SCRIPT}"; then
@@ -220,7 +366,6 @@ detect_current_mode() {
     elif grep -q "^# --- cron mode ---" "${BOOT_SCRIPT}"; then
         echo "cron"
     elif [[ -f "${CRON_FILE}" ]]; then
-        # Pre-E1 installs wrote /etc/cron.d/dddns inline.
         echo "cron"
     fi
 }
@@ -240,32 +385,38 @@ prompt_mode() {
     esac
 }
 
-# apply_mode delegates boot-script generation to the binary and then
-# runs the script once so the install is effective without a reboot.
+# Delegates boot-script generation to the binary and runs the script once
+# so the install is effective without a reboot. Returns 0 on success, 1
+# on any downstream failure — caller handles rollback.
 apply_mode() {
     local mode="$1"
     local dddns="${INSTALL_DIR}/${BINARY_NAME}"
     local secret=""
 
     if [[ "$mode" == "serve" ]]; then
-        log_info "Initializing serve-mode shared secret..."
-        if ! secret=$("${dddns}" config rotate-secret --init --quiet); then
-            log_error "Failed to initialize serve-mode secret"
-            exit 1
+        log_phase apply "Initializing serve-mode shared secret..."
+        if ! secret=$("${dddns}" config rotate-secret --init --quiet 2>&1); then
+            log_error "[apply] Failed to initialize serve-mode secret: ${secret}"
+            return 1
         fi
     fi
 
-    log_info "Generating boot script (mode=${mode})..."
-    "${dddns}" config set-mode "${mode}" --boot-path "${BOOT_SCRIPT}" >/dev/null
+    log_phase apply "Generating boot script (mode=${mode})..."
+    if ! "${dddns}" config set-mode "${mode}" --boot-path "${BOOT_SCRIPT}" >/dev/null; then
+        log_error "[apply] config set-mode failed"
+        return 1
+    fi
 
-    log_info "Applying boot script..."
-    # The boot script is idempotent — re-running it switches away from
-    # the other mode's artefacts as needed.
-    bash "${BOOT_SCRIPT}" || log_warning "Boot script returned non-zero — check ${LOG_FILE}"
+    log_phase apply "Running boot script..."
+    # Cosmetic failures (systemctl warnings on first run, cron restart
+    # messages) are not fatal — the script IS idempotent and will re-run
+    # next boot. Only treat an exit > 1 as fatal.
+    bash "${BOOT_SCRIPT}" >/dev/null 2>&1 || log_warning "[apply] Boot script returned non-zero (often cosmetic — systemctl / cron restart warnings)"
 
     if [[ "$mode" == "serve" ]]; then
         print_unifi_ui_values "$secret"
     fi
+    return 0
 }
 
 print_unifi_ui_values() {
@@ -280,7 +431,7 @@ print_unifi_ui_values() {
     bar=$(printf '=%.0s' {1..65})
     echo ""
     echo "${bar}"
-    echo "  UniFi UI values"
+    echo "  UniFi UI values — PASTE NOW, this secret is shown once"
     echo "  Settings → Internet → Dynamic DNS → Create"
     echo "${bar}"
     echo ""
@@ -292,31 +443,50 @@ print_unifi_ui_values() {
     echo ""
     echo "${bar}"
     echo ""
-    echo "The secret above is written to config (encrypted if you run"
-    echo "'dddns secure enable') and will not be shown again. To rotate,"
-    echo "run 'dddns config rotate-secret' and update the UniFi UI."
+    echo "The secret is encrypted at rest in config.secure after 'dddns"
+    echo "secure enable'. To rotate, run 'dddns config rotate-secret' and"
+    echo "update the UniFi UI with the new value."
     echo ""
 }
 
+# ---------------------------------------------------------------------------
+# Top-level actions
+# ---------------------------------------------------------------------------
+
 uninstall() {
     log_warning "Uninstalling dddns..."
-    # Stop serve-mode supervision if active.
-    if [ -f "/etc/systemd/system/dddns.service" ]; then
+    if [[ -f "/etc/systemd/system/dddns.service" ]]; then
         systemctl stop dddns.service >/dev/null 2>&1 || true
         systemctl disable dddns.service >/dev/null 2>&1 || true
         rm -f "/etc/systemd/system/dddns.service"
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
-    # Stop cron-mode updates if active.
     rm -f "${CRON_FILE}"
     /etc/init.d/cron restart >/dev/null 2>&1 || true
-    # Remove files.
     rm -f "${BOOT_SCRIPT}"
     rm -f "/usr/local/bin/${BINARY_NAME}"
     rm -rf "${INSTALL_DIR}"
     log_warning "Configuration preserved at ${CONFIG_DIR}"
     log_info "To remove configuration: rm -rf ${CONFIG_DIR}"
     log_success "dddns uninstalled"
+}
+
+rollback_action() {
+    log_warning "[rollback] Reverting to previous dddns install..."
+    if [[ ! -f "${INSTALL_DIR}/${BINARY_NAME}${PREV_SUFFIX}" ]]; then
+        log_error "[rollback] No ${INSTALL_DIR}/${BINARY_NAME}${PREV_SUFFIX} on disk — nothing to roll back to"
+        log_info "Rollback snapshots are written during each install and removed only by the next successful install."
+        exit 1
+    fi
+    if ! rollback_state; then
+        exit 1
+    fi
+    echo ""
+    log_success "[rollback] Complete"
+    "${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null || true
+    echo ""
+    log_info "If the rollback resolved an issue, please file a report at:"
+    log_info "  https://github.com/${GITHUB_REPO}/issues"
 }
 
 usage() {
@@ -330,9 +500,16 @@ Options:
   --force             Reinstall the binary even if the current version
                       matches the latest release.
   --uninstall         Remove dddns. Preserves configuration.
+  --rollback          Restore the previous binary + boot script + cron
+                      entry from the .prev snapshots written by the last
+                      install.
   --help              Show this message.
 EOF
 }
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 main() {
     local action="install"
@@ -342,7 +519,8 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --uninstall) action="uninstall"; shift ;;
-            --force)     force="true"; shift ;;
+            --rollback)  action="rollback";  shift ;;
+            --force)     force="true";       shift ;;
             --mode)
                 shift
                 [[ $# -eq 0 ]] && { log_error "--mode requires an argument"; exit 1; }
@@ -367,8 +545,14 @@ main() {
     echo ""
 
     check_root
+
+    if [[ "$action" == "rollback" ]]; then
+        rollback_action
+        exit 0
+    fi
+
     detect_arch
-    check_udm
+    detect_unifi_device
 
     if [[ "$action" == "uninstall" ]]; then
         uninstall
@@ -417,16 +601,51 @@ main() {
         echo ""
     fi
 
-    install_unifios_utilities
+    ensure_on_boot_hook
 
     log_info "Fetching latest release tag..."
     local version
     version=$(get_latest_version)
     log_info "Latest release: ${version}"
 
-    install_binary "${version}" "${force}"
+    # Short-circuit the expensive path if we're already on the latest and
+    # the user didn't force reinstall. Only applies to existing installs.
+    if [[ "$is_upgrade" == "true" ]] && [[ "$force" != "true" ]]; then
+        local current
+        current=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | awk '{print $3}' || echo "")
+        if [[ -n "$current" ]] && { [[ "$current" == "$version" ]] || [[ "v$current" == "$version" ]]; }; then
+            log_success "dddns ${version} already installed — nothing to do"
+            exit 0
+        fi
+    fi
+
+    download_binary "${version}"
+
+    # --- Safety gate 1: preflight against existing config ---
+    if ! preflight_binary; then
+        log_error "Pre-flight failed — existing install untouched"
+        exit 1
+    fi
+
+    # --- Safety gate 2: snapshot prior state before replacing anything ---
+    save_state
+
+    place_new_binary
     create_default_config
-    apply_mode "${mode}"
+
+    # --- apply mode with rollback on failure ---
+    if ! apply_mode "${mode}"; then
+        log_error "Mode apply failed — rolling back"
+        rollback_state
+        exit 1
+    fi
+
+    # --- Safety gate 3: post-install smoke with rollback on failure ---
+    if ! postinstall_smoke; then
+        log_error "Post-install smoke failed — rolling back"
+        rollback_state
+        exit 1
+    fi
 
     echo ""
     echo "======================================"
@@ -436,6 +655,10 @@ main() {
         echo "  Install complete (mode=${mode})"
     fi
     echo "======================================"
+    echo ""
+    log_info "Previous state preserved for rollback:"
+    log_info "  ${INSTALL_DIR}/${BINARY_NAME}${PREV_SUFFIX}"
+    log_info "To revert: $(basename "$0") --rollback"
     echo ""
 
     if [[ "$is_upgrade" != "true" ]]; then

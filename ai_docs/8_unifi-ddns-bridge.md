@@ -540,10 +540,14 @@ These are bugs discovered during design analysis. They pre-date this work, are i
 **Status:** ✅ Complete. Full suite green (194 tests across 13 packages). `dddns config rotate-secret --help` visible in the CLI.
 **Findings:** `SaveSecure` needed a small fix — its files are written 0400 (read-only), so a second call on an existing file couldn't truncate. Added a chmod-to-0600, write, chmod-to-0400 dance. Same root cause as the tamper test in B2 surfaced in reverse.
 
-**D4. `internal/bootscript` + `dddns config set-mode`.**
-- Pure function: `Generate(mode, paths) string` returns the correct boot script body.
-- `set-mode` validates target, writes `/data/on_boot.d/20-dddns.sh`, removes `/etc/cron.d/dddns` or serve supervisor as appropriate, runs the script once.
-- Tests: golden-file tests on generated scripts; validates that switching is idempotent.
+**D4. `internal/bootscript` + `dddns config set-mode`.** ✅ Completed
+- New package `internal/bootscript`. `Generate(Params) (string, error)` returns the full text of the `on_boot.d` script for the selected mode. A shared `commonHeader` section handles the binary symlink + config-dir bootstrap; a mode-specific tail either installs the cron entry (and `pkill`s any stray serve loop) or starts the supervised `while true; dddns serve; sleep 5` loop (and removes any stale cron entry). `DefaultUnifiParams(mode)` returns production-standard UniFi paths (`/data/dddns/dddns`, `/data/.dddns`, `/etc/cron.d/dddns`, `/var/log/dddns.log`, `/var/log/dddns-server.log`, `*/30 * * * *`).
+- New `dddns config set-mode {cron|serve}` subcommand validates the mode, loads config, enforces `cfg.Server != nil` + `ServerConfig.Validate()` before allowing `serve`, generates the script, writes it to `--boot-path` (default `/data/on_boot.d/20-dddns.sh`) with 0755 perms, and prints apply-or-reboot instructions. No auto-execution — the command is safe to run on any OS; operators explicitly apply via `sudo /data/on_boot.d/20-dddns.sh` or a reboot.
+- 5 bootscript tests: cron script content, serve script content, invalid mode, idempotency on identical params, custom-path round-trip.
+- 6 set-mode tests: invalid mode, cron writes script + correct perms + mode label in output, serve requires a server block (error path, no file written), serve writes the supervised loop, two identical calls produce byte-equal files, and switching cron → serve fully replaces rather than appends.
+
+**Status:** ✅ Complete. Full suite green (205 tests across 14 packages). `dddns config set-mode --help` visible in the CLI.
+**Findings:** No surprises. Keeping `set-mode` side-effect-minimal (no auto-apply) removed a whole class of "did you mean to kill dddns just now?" ambiguity and made the command testable on any OS.
 
 ### Phase E — Installer integration
 

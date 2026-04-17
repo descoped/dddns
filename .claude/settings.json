@@ -1,0 +1,39 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(BODY=*)",
+      "Bash(FIXED=*)",
+      "Read",
+      "Write",
+      "Edit",
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Skill(example-skills:xlsx)",
+      "Skill(example-skills:docx)",
+      "Skill(example-skills:pptx)",
+      "Skill(example-skills:doc-coauthoring)",
+      "Skill(example-skills:pdf)",
+      "Skill(example-skills:internal-comms)",
+      "Skill(example-skills:algorithmic-art)",
+      "Skill(example-skills:web-artifacts-builder)",
+      "Skill(example-skills:mcp-builder)",
+      "Skill(example-skills:theme-factory)",
+      "Skill(example-skills:brand-guidelines)",
+      "Skill(example-skills:slack-gif-creator)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "includeGitInstructions": false,
+  "enabledPlugins": {}
+}

@@ -135,9 +135,13 @@ From `20260417T2033Z_cli-for-idiots.md`:
 
 Residual items (originally from the retired `20260417T2002Z_release-prep.md`):
 - CI workflow polish (lint-gate, concurrency block, `-trimpath`).
-- Cron-mode log routing through journald instead of flat files (`\| logger -t dddns`).
+- Cron-mode log routing through journald instead of flat files (`\| logger -t dddns`). Also closes the "no rotation on `/var/log/dddns.log`" gap — journald rotates itself.
 - Memory-leak audit for the serve-mode listener under sustained load. Target: RSS stays <20 MB after 24 h of simulated `inadyn` push traffic. Tools: `go test -run TestServer_Integration -race -count=1000` + `pprof -alloc_space` against a sustained-load harness.
 - Docs refresh — **done 2026-04-18** alongside this plan.
+
+Logging UX (identified during v0.2.0 release review):
+- `--verbose` flag on `dddns update` as the counterpart to `--quiet`. Today operators wanting "tell me what you're doing" have to use `--dry-run`, which is semantically different (doesn't actually update). Should emit the `logInfo` closure output unconditionally.
+- Add a "Where do my logs live?" section to `docs/troubleshooting.md` documenting the four log sinks (cron operational log, serve audit JSONL, serve status snapshot, systemd journal) and when to look at each. Issue-triage value: users reporting "serve mode isn't working" often only check `/var/log/dddns.log`, miss `serve-audit.log` + `journalctl -u dddns`.
 
 ### Multi-provider rollout order
 

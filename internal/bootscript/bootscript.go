@@ -119,6 +119,10 @@ Type=simple
 ExecStart=/usr/local/bin/dddns serve
 Restart=always
 RestartSec=5
+# GOMEMLIMIT caps the Go heap (soft limit). dddns serve is idle most of the
+# time; this keeps RSS bounded under sustained inadyn push load on
+# memory-constrained routers (UDR7 / UDM family have modest RAM budgets).
+Environment=GOMEMLIMIT=16MiB
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=dddns

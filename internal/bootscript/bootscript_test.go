@@ -48,6 +48,7 @@ func TestGenerate_Serve(t *testing.T) {
 		"ExecStart=/usr/local/bin/dddns serve",
 		"Restart=always",
 		"RestartSec=5",
+		"Environment=GOMEMLIMIT=16MiB",
 		"NoNewPrivileges=true",
 		"ProtectSystem=strict",
 		"ReadWritePaths=/data/.dddns /var/log",

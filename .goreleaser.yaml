@@ -25,6 +25,11 @@ builds:
     ignore:
       - goos: windows
         goarch: arm
+    flags:
+      # -trimpath drops absolute source paths from stack traces and
+      # BuildID. Enables reproducible builds and avoids leaking the
+      # build-host $GOPATH into shipped binaries.
+      - -trimpath
     ldflags:
       - -s -w
       - -X github.com/descoped/dddns/internal/version.Version={{.Version}}

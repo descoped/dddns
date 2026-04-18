@@ -122,7 +122,11 @@ vexec() {
 # which is useless as a suggestion; fall back to the canonical curl-pipe
 # form so "To revert: X" is always copy-pasteable.
 invocation_hint() {
-    local suffix="$1"
+    # Accept a variadic trailing flag list so callers can write e.g.
+    # `invocation_hint --mode cron --force` and get back a re-runnable
+    # line with all three tokens preserved. Joining via "$*" flattens
+    # the args with spaces — the same shape bash would have seen.
+    local suffix="$*"
     if [[ "$0" == /dev/fd/* ]] || [[ "$0" == "bash" ]]; then
         echo "bash <(curl -fsL https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install-on-unifi-os.sh) ${suffix}"
     else

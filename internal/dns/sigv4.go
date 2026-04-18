@@ -15,7 +15,7 @@ import (
 // sigV4Algorithm is the fixed algorithm identifier used in the Authorization header.
 const sigV4Algorithm = "AWS4-HMAC-SHA256"
 
-// signRequest attaches an AWS Signature Version 4 Authorization header to req.
+// SignRequest attaches an AWS Signature Version 4 Authorization header to req.
 //
 // Reference: https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
 //
@@ -33,7 +33,7 @@ const sigV4Algorithm = "AWS4-HMAC-SHA256"
 // alphabetically-sorted canonical-headers block and the signed-headers
 // list. Long-lived IAM user credentials pass "" and get byte-identical
 // behaviour to the no-token form (proven by TestSigV4 vector tests).
-func signRequest(req *http.Request, accessKey, secretKey, sessionToken, region, service, payloadHash string, now time.Time) {
+func SignRequest(req *http.Request, accessKey, secretKey, sessionToken, region, service, payloadHash string, now time.Time) {
 	timestamp := now.UTC().Format("20060102T150405Z")
 	datestamp := now.UTC().Format("20060102")
 	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", datestamp, region, service)

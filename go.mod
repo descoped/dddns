@@ -3,6 +3,7 @@ module github.com/descoped/dddns
 go 1.26
 
 require (
+	github.com/aws/aws-lambda-go v1.54.0
 	github.com/spf13/cobra v1.10.2
 	go.yaml.in/yaml/v3 v3.0.4
 )

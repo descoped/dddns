@@ -184,7 +184,7 @@ func (r *Route53Client) UpdateIP(ctx context.Context, newIP string) error {
 // allows callers to avoid re-reading req.Body for signing (the signer needs
 // the payload hash, already computed by the caller).
 func (r *Route53Client) do(req *http.Request, payloadHash string, _ []byte) ([]byte, error) {
-	signRequest(req, r.accessKey, r.secretKey, r.sessionToken, route53Region, route53Service, payloadHash, r.now())
+	SignRequest(req, r.accessKey, r.secretKey, r.sessionToken, route53Region, route53Service, payloadHash, r.now())
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {

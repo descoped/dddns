@@ -72,7 +72,7 @@ func TestCanonicalQueryString(t *testing.T) {
 func TestSignRequest_SetsAuthorizationHeader(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://route53.amazonaws.com/2013-04-01/hostedzone/Z1/rrset?name=x&type=A", nil)
 	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
-	signRequest(req, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
+	SignRequest(req, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
 
 	auth := req.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 ") {
@@ -113,10 +113,10 @@ func TestSignRequest_WithSessionToken(t *testing.T) {
 	// Sign the same request twice — once without token, once with —
 	// and compare.
 	a, _ := http.NewRequest(http.MethodGet, url, nil)
-	signRequest(a, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
+	SignRequest(a, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
 
 	b, _ := http.NewRequest(http.MethodGet, url, nil)
-	signRequest(b, "AKIDEXAMPLE", "secret", "STS-SESSION-TOKEN-FIXTURE", "us-east-1", "route53", emptyPayloadHash, now)
+	SignRequest(b, "AKIDEXAMPLE", "secret", "STS-SESSION-TOKEN-FIXTURE", "us-east-1", "route53", emptyPayloadHash, now)
 
 	if b.Header.Get("X-Amz-Security-Token") != "STS-SESSION-TOKEN-FIXTURE" {
 		t.Errorf("X-Amz-Security-Token wrong: %q", b.Header.Get("X-Amz-Security-Token"))

@@ -155,6 +155,38 @@ binary_version_bare() {
     "$1" --version 2>/dev/null | awk '{print $3}' || true
 }
 
+# elf_info reads the first 20 bytes of a file and reports its ELF class
+# (32/64-bit) and machine type (x86-64 / aarch64 / ARM / ...). Used as a
+# fallback for `file` on minimal userlands (UniFi OS ships without it).
+# Returns empty string + non-zero exit on non-ELF input or read failure.
+elf_info() {
+    local path="$1"
+    local bytes class machine lo hi machine_hex
+
+    bytes=$(od -A n -t x1 -N 20 "$path" 2>/dev/null | tr -d ' \n') || return 1
+    [[ "${bytes:0:8}" == "7f454c46" ]] || return 1   # ELF magic
+
+    case "${bytes:8:2}" in
+        01) class="32-bit" ;;
+        02) class="64-bit" ;;
+        *)  class="?"      ;;
+    esac
+
+    # e_machine at offset 18, little-endian (low byte first).
+    lo="${bytes:36:2}"
+    hi="${bytes:38:2}"
+    machine_hex="${hi}${lo}"
+    case "$machine_hex" in
+        003e) machine="x86-64"  ;;
+        00b7) machine="aarch64" ;;
+        0028) machine="ARM"     ;;
+        00f3) machine="RISC-V"  ;;
+        *)    machine="e_machine=0x${machine_hex}" ;;
+    esac
+
+    printf 'ELF %s %s\n' "$class" "$machine"
+}
+
 # ---------------------------------------------------------------------------
 # Platform checks
 # ---------------------------------------------------------------------------
@@ -822,14 +854,15 @@ probe_section_dddns_install() {
         local ver arch_detail size
         ver=$(binary_version_line "${INSTALL_DIR}/${BINARY_NAME}")
         size=$(stat -c%s "${INSTALL_DIR}/${BINARY_NAME}")
-        # `file -b` skips the leading filename so parsing stays simple.
-        # Keep the first two comma-separated fields — typically enough to
-        # confirm ELF class + CPU family without dumping the full BuildID.
+        # Prefer `file -b` when available; fall back to a bash-native ELF
+        # header inspector for minimal userlands like UniFi OS that ship
+        # without the `file` command.
         if command -v file >/dev/null 2>&1; then
             arch_detail=$(file -b "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null | awk -F, '{print $1", "$2}')
             [[ -z "$arch_detail" ]] && arch_detail="(unknown)"
         else
-            arch_detail="(file command unavailable)"
+            arch_detail=$(elf_info "${INSTALL_DIR}/${BINARY_NAME}" || true)
+            [[ -z "$arch_detail" ]] && arch_detail="(not an ELF file)"
         fi
         printf '  binary:          %s (%s bytes)\n' "${INSTALL_DIR}/${BINARY_NAME}" "$size"
         printf '  file type:       %s\n' "$arch_detail"

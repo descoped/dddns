@@ -282,7 +282,7 @@ func TestResolveIP_ExplicitLocal(t *testing.T) {
 		nil,
 		"linux")
 
-	ip, err := res.resolveIP(context.Background(), &config.Config{
+	ip, desc, err := res.resolveIP(context.Background(), &config.Config{
 		IPSource: "local",
 		Server:   &config.ServerConfig{WANInterface: "eth8"},
 	})
@@ -295,6 +295,9 @@ func TestResolveIP_ExplicitLocal(t *testing.T) {
 	if captured != "eth8" {
 		t.Errorf("wan_interface not forwarded: got %q", captured)
 	}
+	if !strings.Contains(desc, "local") || !strings.Contains(desc, "eth8") {
+		t.Errorf("description %q should mention 'local' and 'eth8'", desc)
+	}
 }
 
 func TestResolveIP_ExplicitRemote(t *testing.T) {
@@ -303,12 +306,15 @@ func TestResolveIP_ExplicitRemote(t *testing.T) {
 		func(context.Context) (string, error) { return "5.6.7.8", nil },
 		"udm") // even on UDM, explicit remote overrides the default
 
-	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: "remote"})
+	ip, desc, err := res.resolveIP(context.Background(), &config.Config{IPSource: "remote"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ip != "5.6.7.8" {
 		t.Errorf("got %s", ip)
+	}
+	if !strings.Contains(desc, "remote") {
+		t.Errorf("description %q should mention 'remote'", desc)
 	}
 }
 
@@ -323,12 +329,15 @@ func TestResolveIP_AutoOnUDM_PicksLocal(t *testing.T) {
 		nil,
 		"udm")
 
-	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: ""})
+	ip, desc, err := res.resolveIP(context.Background(), &config.Config{IPSource: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ip != testPublicIP {
 		t.Errorf("got %s", ip)
+	}
+	if !strings.Contains(desc, "auto") || !strings.Contains(desc, "udm") {
+		t.Errorf("description %q should mention 'auto' and 'udm'", desc)
 	}
 }
 
@@ -338,12 +347,15 @@ func TestResolveIP_AutoOffUDM_PicksRemote(t *testing.T) {
 		func(context.Context) (string, error) { return "5.6.7.8", nil },
 		"macos")
 
-	ip, err := res.resolveIP(context.Background(), &config.Config{IPSource: "auto"})
+	ip, desc, err := res.resolveIP(context.Background(), &config.Config{IPSource: "auto"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ip != "5.6.7.8" {
 		t.Errorf("got %s", ip)
+	}
+	if !strings.Contains(desc, "auto") || !strings.Contains(desc, "non-udm") {
+		t.Errorf("description %q should mention 'auto' and 'non-udm'", desc)
 	}
 }
 
@@ -353,7 +365,7 @@ func TestResolveIP_InvalidSource(t *testing.T) {
 		func(context.Context) (string, error) { return "", nil },
 		"linux")
 
-	if _, err := res.resolveIP(context.Background(), &config.Config{IPSource: "bogus"}); err == nil {
+	if _, _, err := res.resolveIP(context.Background(), &config.Config{IPSource: "bogus"}); err == nil {
 		t.Error("expected error for invalid ip_source")
 	}
 }

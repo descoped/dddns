@@ -49,14 +49,19 @@ func defaultResolver() *resolver {
 
 // resolveIP picks between the local WAN interface and a remote lookup
 // based on cfg.IPSource. Empty / "auto" defaults to local on the UDM
-// profile, remote elsewhere.
-func (r *resolver) resolveIP(ctx context.Context, cfg *config.Config) (string, error) {
+// profile, remote elsewhere. The returned description is human-readable
+// ("local (auto → udm profile)", "remote (cfg.ip_source=remote)") and is
+// only consumed by --verbose — production paths ignore it.
+func (r *resolver) resolveIP(ctx context.Context, cfg *config.Config) (ip, description string, err error) {
 	source := cfg.IPSource
+	autoDecision := ""
 	if source == "" || source == "auto" {
 		if r.profile() == "udm" {
 			source = "local"
+			autoDecision = "auto → udm profile"
 		} else {
 			source = "remote"
+			autoDecision = "auto → non-udm profile"
 		}
 	}
 	switch source {
@@ -65,11 +70,21 @@ func (r *resolver) resolveIP(ctx context.Context, cfg *config.Config) (string, e
 		if cfg.Server != nil {
 			iface = cfg.Server.WANInterface
 		}
-		return r.localIP(iface)
+		ip, err = r.localIP(iface)
+		description = fmt.Sprintf("local (iface=%q)", iface)
+		if autoDecision != "" {
+			description = fmt.Sprintf("local (%s, iface=%q)", autoDecision, iface)
+		}
+		return ip, description, err
 	case "remote":
-		return r.remoteIP(ctx)
+		ip, err = r.remoteIP(ctx)
+		description = "remote (checkip.amazonaws.com)"
+		if autoDecision != "" {
+			description = fmt.Sprintf("remote (%s, checkip.amazonaws.com)", autoDecision)
+		}
+		return ip, description, err
 	default:
-		return "", fmt.Errorf("unknown ip_source %q", source)
+		return "", "", fmt.Errorf("unknown ip_source %q", source)
 	}
 }
 
@@ -86,6 +101,7 @@ type Options struct {
 	Force      bool
 	DryRun     bool
 	Quiet      bool
+	Verbose    bool   // emit per-step diagnostic output (source choice, interface, TTL)
 	OverrideIP string // empty = resolve via myip.GetPublicIP (default cron behavior)
 
 	// Client, if set, replaces the Route53 client the updater would otherwise
@@ -115,15 +131,21 @@ func updateWithResolver(ctx context.Context, cfg *config.Config, opts Options, r
 			log.Printf(format, args...)
 		}
 	}
+	logVerbose := func(format string, args ...interface{}) {
+		if opts.Verbose {
+			log.Printf(format, args...)
+		}
+	}
 
 	// 1. Resolve current IP (override, or dispatch on cfg.IPSource).
 	currentIP := opts.OverrideIP
 	if currentIP == "" {
-		detected, err := res.resolveIP(ctx, cfg)
+		detected, source, err := res.resolveIP(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get public IP: %w", err)
 		}
 		currentIP = detected
+		logVerbose("IP source: %s", source)
 		logInfo("Current public IP: %s", currentIP)
 	} else {
 		logInfo("Using custom IP: %s", currentIP)

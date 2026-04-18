@@ -19,6 +19,7 @@ var (
 	dryRun      bool
 	customIP    string
 	quiet       bool
+	verbose     bool
 )
 
 // updateTimeout is the maximum wall-clock time an `update` run may take.
@@ -41,6 +42,7 @@ func init() {
 	updateCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be done without making changes")
 	updateCmd.Flags().StringVar(&customIP, "ip", "", "Use specific IP address instead of auto-detecting")
 	updateCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output (for cron)")
+	updateCmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Emit per-step diagnostic output (overrides --quiet)")
 }
 
 // runUpdate wires the cobra command to the updater package. It builds a
@@ -61,14 +63,18 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
-	if !quiet {
+	// --verbose overrides --quiet so operators can flip on diagnostic output
+	// for a one-off cron investigation without editing the bootscript.
+	effectiveQuiet := quiet && !verbose
+	if !effectiveQuiet {
 		log.Printf("[%s] Checking for IP changes...", time.Now().Format("2006-01-02 15:04:05"))
 	}
 
 	opts := updater.Options{
-		Force:  forceUpdate,
-		DryRun: dryRun,
-		Quiet:  quiet,
+		Force:   forceUpdate,
+		DryRun:  dryRun,
+		Quiet:   effectiveQuiet,
+		Verbose: verbose,
 	}
 	if customIP != "" {
 		if err := myip.ValidatePublicIP(customIP); err != nil {

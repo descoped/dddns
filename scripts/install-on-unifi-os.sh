@@ -165,6 +165,20 @@ has_config() {
     [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]
 }
 
+# is_disabled_state detects the state left behind by `--disable`: the
+# binary is installed, but none of the scheduler artefacts (boot script,
+# cron file, systemd unit) are present. When an upgrade lands on this
+# state we replace the binary without regenerating the scheduler —
+# otherwise a 'curl | bash --force' would silently reactivate an update
+# loop the operator deliberately retired (e.g. after migrating to a
+# cloud deployment like the Lambda form).
+is_disabled_state() {
+    [[ -f "${INSTALL_DIR}/${BINARY_NAME}" ]] &&
+    [[ ! -f "${BOOT_SCRIPT}" ]] &&
+    [[ ! -f "${CRON_FILE}" ]] &&
+    [[ ! -f "${SYSTEMD_UNIT}" ]]
+}
+
 # binary_version_line emits the full first line of `--version` output. Safe
 # for logging. Silent on failure (returns empty).
 binary_version_line() {
@@ -1177,7 +1191,9 @@ Options:
                       that would regenerate/restart the loop). Useful
                       when migrating the DDNS role elsewhere (e.g. to
                       an AWS Lambda) without committing to full removal.
-                      Re-run the installer with --force to re-enable.
+                      Subsequent installer runs upgrade the binary only
+                      while preserving the disabled state. To re-enable
+                      a scheduler, pass --mode cron|serve --force.
   --uninstall         Remove dddns (includes --disable, then also deletes
                       the binary and install directory). Preserves
                       configuration at ${CONFIG_DIR:-/data/.dddns}.
@@ -1302,8 +1318,25 @@ run_install() {
     has_config && is_upgrade="true"
     log_debug "is_upgrade=${is_upgrade}"
 
-    local mode
-    mode=$(resolve_mode "$is_upgrade")
+    # Detect the state left by `--disable`. When present we upgrade the
+    # binary only, preserving the operator's decision to retire the
+    # update loop. Explicit --mode on the command line opts back in to
+    # a full re-activation (same semantics as a regular upgrade).
+    local disabled="false"
+    if is_disabled_state && [[ -z "$CLI_MODE" ]]; then
+        disabled="true"
+    fi
+    log_debug "disabled=${disabled}"
+
+    local mode=""
+    if [[ "$disabled" == "true" ]]; then
+        # Mode resolution is skipped entirely — there's no scheduler to
+        # apply to. We still set a sentinel so gather_environment /
+        # print_environment have something honest to display.
+        mode="disabled"
+    else
+        mode=$(resolve_mode "$is_upgrade")
+    fi
 
     gather_environment "${CLI_VERSION}" "$mode"
     print_environment
@@ -1318,7 +1351,12 @@ run_install() {
         echo ""
     fi
 
-    ensure_on_boot_hook
+    # on_boot hook is only needed when something under /data/on_boot.d/
+    # has to run on boot. A disabled install has no boot script — don't
+    # nag the operator about enabling the on-boot hook machinery.
+    if [[ "$disabled" != "true" ]]; then
+        ensure_on_boot_hook
+    fi
 
     local version
     version=$(resolve_version)
@@ -1339,10 +1377,14 @@ run_install() {
     create_default_config
 
     # --- apply mode with rollback on failure ---
-    if ! apply_mode "${mode}"; then
-        log_error "Mode apply failed — rolling back"
-        rollback_state
-        exit 1
+    # Skipped in disabled state: no boot script to regenerate, no cron
+    # entry to install, no systemd unit to start. Just the binary swap.
+    if [[ "$disabled" != "true" ]]; then
+        if ! apply_mode "${mode}"; then
+            log_error "Mode apply failed — rolling back"
+            rollback_state
+            exit 1
+        fi
     fi
 
     # --- Safety gate 3: post-install smoke with rollback on failure ---
@@ -1352,11 +1394,24 @@ run_install() {
         exit 1
     fi
 
-    print_success "$is_upgrade" "$mode"
+    print_success "$is_upgrade" "$mode" "$disabled"
 }
 
 print_success() {
-    local is_upgrade="$1" mode="$2"
+    local is_upgrade="$1" mode="$2" disabled="${3:-false}"
+    if [[ "$disabled" == "true" ]]; then
+        print_banner "Binary upgraded (disabled state preserved)"
+        log_info "Previous state preserved for rollback:"
+        log_info "  ${INSTALL_DIR}/${BINARY_NAME}${PREV_SUFFIX}"
+        log_info "To revert: $(invocation_hint --rollback)"
+        echo ""
+        log_info "No scheduler was regenerated — dddns remains disabled."
+        log_info "To re-enable a scheduler, pass a mode explicitly:"
+        log_info "  $(invocation_hint --mode cron --force)"
+        log_info "  $(invocation_hint --mode serve --force)"
+        echo ""
+        return
+    fi
     if [[ "$is_upgrade" == "true" ]]; then
         print_banner "Upgrade complete (mode=${mode})"
     else

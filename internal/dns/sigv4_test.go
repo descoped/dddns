@@ -23,9 +23,9 @@ func TestDeriveSigningKey_AWSReference(t *testing.T) {
 
 func TestAwsURIEncode(t *testing.T) {
 	cases := []struct {
-		name, in       string
-		encodeSlash    bool
-		want           string
+		name, in    string
+		encodeSlash bool
+		want        string
 	}{
 		{"unreserved passes through", "AZaz09-_.~", false, "AZaz09-_.~"},
 		{"slash preserved in path", "/foo/bar", false, "/foo/bar"},

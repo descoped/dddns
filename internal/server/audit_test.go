@@ -125,9 +125,9 @@ func TestAuditLog_ConcurrentWritesSerialized(t *testing.T) {
 	log := NewAuditLog(path)
 
 	const (
-		workers      = 10
-		perWorker    = 100
-		totalWrites  = workers * perWorker
+		workers     = 10
+		perWorker   = 100
+		totalWrites = workers * perWorker
 	)
 
 	var wg sync.WaitGroup

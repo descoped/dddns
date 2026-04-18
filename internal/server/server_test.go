@@ -111,7 +111,7 @@ func TestServer_Integration_EndToEnd(t *testing.T) {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if got := strings.TrimSpace(string(body)); got != "good " + testPublicIP {
+	if got := strings.TrimSpace(string(body)); got != "good "+testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 }

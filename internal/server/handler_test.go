@@ -29,27 +29,27 @@ const (
 // fixture wires a Handler with in-memory dependencies and exposes
 // overrideable stubs for the upstream calls. Each test gets its own.
 type fixture struct {
-	handler   *Handler
-	auth      *Authenticator
-	audit     *AuditLog
-	status    *StatusWriter
-	auditPath string
+	handler    *Handler
+	auth       *Authenticator
+	audit      *AuditLog
+	status     *StatusWriter
+	auditPath  string
 	statusPath string
 
-	wanIPReturn    net.IP
-	wanIPErr       error
-	updaterResult  *updater.Result
-	updaterErr     error
-	updaterCalled  bool
-	updaterOpts    updater.Options
+	wanIPReturn   net.IP
+	wanIPErr      error
+	updaterResult *updater.Result
+	updaterErr    error
+	updaterCalled bool
+	updaterOpts   updater.Options
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	tmp := t.TempDir()
 	f := &fixture{
-		auditPath:  filepath.Join(tmp, "audit.log"),
-		statusPath: filepath.Join(tmp, "status.json"),
+		auditPath:   filepath.Join(tmp, "audit.log"),
+		statusPath:  filepath.Join(tmp, "status.json"),
 		wanIPReturn: net.ParseIP(testPublicIP),
 	}
 	cfg := &config.Config{
@@ -169,7 +169,7 @@ func TestHandler_UpdatedGood(t *testing.T) {
 	f.updaterResult = &updater.Result{Action: "updated", NewIP: testPublicIP, Hostname: testHostname}
 	req := newReq(t, map[string]string{"hostname": testHostname, "myip": testPublicIP}, testSecretV)
 	w := f.do(req, "127.0.0.1:54321")
-	if got := strings.TrimSpace(w.Body.String()); got != "good " + testPublicIP {
+	if got := strings.TrimSpace(w.Body.String()); got != "good "+testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 	if !f.updaterCalled {
@@ -185,7 +185,7 @@ func TestHandler_NoChange(t *testing.T) {
 	f.updaterResult = &updater.Result{Action: "nochg-cache", NewIP: testPublicIP}
 	req := newReq(t, map[string]string{"hostname": testHostname}, testSecretV)
 	w := f.do(req, "127.0.0.1:54321")
-	if got := strings.TrimSpace(w.Body.String()); got != "nochg " + testPublicIP {
+	if got := strings.TrimSpace(w.Body.String()); got != "nochg "+testPublicIP {
 		t.Errorf("body = %q", got)
 	}
 }

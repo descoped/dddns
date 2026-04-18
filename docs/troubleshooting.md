@@ -4,6 +4,7 @@ This guide helps you diagnose and fix common issues with dddns.
 
 ## Table of Contents
 - [Quick Diagnostics](#quick-diagnostics)
+- [Where Do My Logs Live?](#where-do-my-logs-live)
 - [Installation Issues](#installation-issues)
 - [Configuration Problems](#configuration-problems)
 - [AWS/Route53 Errors](#awsroute53-errors)
@@ -26,7 +27,8 @@ dddns ip                        # is the public-IP lookup working?
 
 # Cron mode
 dddns update --dry-run          # exercise the full update flow
-tail -50 /var/log/dddns.log     # what did the last cron run say?
+dddns update --verbose          # one-off run with per-step diagnostics
+journalctl -t dddns -n 50       # what did the last few cron runs say?
 
 # Serve mode
 systemctl status dddns          # is the systemd service active?
@@ -35,6 +37,62 @@ dddns serve test                # can we reach it from this shell?
 tail -n 20 /var/log/dddns-audit.log | jq -c '{ts,auth,action,error}'
 journalctl -u dddns -n 50       # recent daemon lifecycle events
 ```
+
+## Where Do My Logs Live?
+
+dddns writes to four different sinks depending on the run mode and the kind of event. Triage gets a lot faster once you know which one to tail.
+
+| Sink | Mode | What's in it | When to look |
+|------|------|--------------|--------------|
+| **`journalctl -t dddns`** | Cron | Every cron invocation that logged anything — by default only real updates and errors (`--quiet` suppresses noops). Add `--since "1h ago"` to time-bound. | First stop for "did cron run? did it succeed?" |
+| **`journalctl -u dddns`** | Serve | Daemon lifecycle — start/stop/restart, `GOMEMLIMIT` environment, systemd signals, panics with stack traces. | First stop for "is the daemon alive? why did it die?" |
+| **`/var/log/dddns-audit.log`** | Serve | JSONL, one line per `POST /nic/update` request. Fields: `ts`, `remote`, `auth`, `action`, `hostname`, `error`. Never contains secrets or body payloads. | First stop for "did UniFi UI / inadyn actually reach the listener? was auth OK? what action did the handler take?" |
+| **`/data/.dddns/serve-status.json`** | Serve | Snapshot of the last request: `action`, `timestamp`, `host`. Single file, overwritten atomically. | Quick "when did I last get a push?" without tailing anything. Also surfaced by `dddns serve status`. |
+
+### When to reach for each
+
+**"The IP didn't update" (cron mode)**:
+```bash
+journalctl -t dddns --since "2 hours ago"
+# If nothing there, cron didn't run — go to cron service checks
+# If 'nochg' only, the IP hasn't actually changed — force-verify with dddns update --verbose
+# If error, the message identifies the layer (config / wanip / Route53)
+```
+
+**"The IP didn't update" (serve mode)**:
+```bash
+dddns serve status                                # quick — last push timestamp
+tail -n 20 /var/log/dddns-audit.log | jq -c .     # full per-request detail
+# No recent entries → inadyn isn't reaching the listener; check CIDR, port, network path
+# Entries with auth=bad → secret mismatch with UniFi UI
+# Entries with action=nochg → IP unchanged; not a bug
+```
+
+**"The daemon is crashing" (serve mode)**:
+```bash
+journalctl -u dddns -n 200 --no-pager    # daemon stderr + panics
+systemctl status dddns                   # systemd's view of restart attempts
+grep '"action":"panic"' /var/log/dddns-audit.log | tail
+```
+
+**"I don't see anything in any log"**: probably `--quiet` doing its job. No IP change, no error = no output. Force a run to confirm the binary still works:
+```bash
+dddns update --verbose --dry-run
+```
+
+### Legacy `/var/log/dddns.log`
+
+Installs from v0.2.0 and earlier routed cron output to `/var/log/dddns.log`. As of v0.2.1 that flat file is retired in favour of `journalctl -t dddns` — journald handles rotation itself. An existing file from before the upgrade is left on disk (you may want the history) but no new bytes are written to it. Safe to delete once you've confirmed journald is capturing the runs you care about:
+
+```bash
+# Verify journald is getting entries
+journalctl -t dddns -n 5
+
+# Then clean up the legacy file if you don't need the history
+rm /var/log/dddns.log
+```
+
+The installer's `--probe` output also flags the legacy file as `legacy — safe to delete` when present, so triage via probe dump will tell you the same thing.
 
 ## Installation Issues
 
@@ -414,39 +472,41 @@ grep CRON /var/log/messages | tail -20
 
 If you're in serve mode, there is no cron entry — `/etc/cron.d/dddns` should be absent. Updates are triggered by whatever DDNS client pushes to the listener. **Note for UniFi Dream users**: the built-in `inadyn` currently cannot reach the loopback listener because of its `-b eth4` binding; see the [UDM Guide](udm-guide.md#serve-mode-on-unifi--current-status-experimental) for the diagnosis. Use cron mode on UDM/UDR for now.
 
-### Cron Logs Are Empty (`/var/log/dddns.log` Stopped Growing)
+### Cron Logs Look Empty (`journalctl -t dddns` Returns Nothing)
 
-**Symptom**: `/var/log/dddns.log` hasn't gained bytes in hours or days, even though `crontab -l` / `cat /etc/cron.d/dddns` shows the entry is there and cron is running.
+**Symptom**: `journalctl -t dddns` has no recent entries even though `cat /etc/cron.d/dddns` shows the entry is there and cron is running.
 
-**Cause**: As of v0.2.0 the generated cron entry is:
+**Cause**: As of v0.2.1 the generated cron entry is:
 
 ```cron
-*/30 * * * * root /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+*/30 * * * * root /usr/local/bin/dddns update --quiet 2>&1 | /usr/bin/logger -t dddns
 ```
 
-With `--quiet`, dddns writes nothing when the IP is unchanged — which is the steady-state outcome most runs. It only logs when the IP actually changes (one `good` line) or something fails (an `ERROR` line). This is by design; the pre-v0.2.0 entry printed a `[timestamp] Running...` banner on every tick, which was noise.
+With `--quiet`, dddns writes nothing when the IP is unchanged — which is the steady-state outcome most runs. `logger` then has nothing to push to journald. The journal only gains entries when the IP actually changes (one `Successfully updated` line) or something fails (an `ERROR` line). This is by design; the pre-v0.2.0 entry printed a `[timestamp] Running...` banner on every tick, which was noise.
 
 **Confirm it's working**:
 
 ```bash
 # Was cron invoked recently?
-grep CRON /var/log/messages | grep dddns | tail -5
+journalctl _COMM=cron --since "2 hours ago" | grep dddns | tail -5
 
-# Force a run to confirm the binary still works
-dddns update --dry-run
+# Force a run with --verbose to confirm the binary still works and see
+# which IP source the updater resolved to. Output goes to stdout (not
+# the journal) since you're running interactively.
+dddns update --verbose --dry-run
 
 # Check the cache — mtime tells you the last time dddns ran to completion
 ls -la /data/.dddns/last-ip.txt
 ```
 
-**If you want verbose cron logs anyway**, hand-roll a custom entry alongside the managed one (see `udm-guide.md` → Custom Update Interval):
+**If you want verbose cron logs anyway**, drop `--quiet` from the cron line. The managed `/etc/cron.d/dddns` is regenerated by the boot script on every boot, so don't edit it directly — instead add a parallel entry:
 
 ```bash
-# /etc/cron.d/dddns-verbose
-*/30 * * * * root /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
+# /etc/cron.d/dddns-verbose (one-off verbose shadow of the managed run)
+*/30 * * * * root /usr/local/bin/dddns update --verbose 2>&1 | /usr/bin/logger -t dddns-verbose
 ```
 
-Drop `--quiet` and the pre-v0.2.0 verbosity returns. Remember the managed `/etc/cron.d/dddns` is regenerated by the boot script on every boot — don't edit it directly.
+Then `journalctl -t dddns-verbose` gives you per-run diagnostics without touching the supervised entry. Remove the shadow file when you're done debugging.
 
 ## Serve Mode Issues
 
@@ -683,19 +743,25 @@ DEBUG=1 dddns update
 
 ### Enable Verbose Output
 
-```bash
-# Set DEBUG environment variable
-DEBUG=1 dddns update
+`dddns update --verbose` emits per-step diagnostic output: the IP-source resolution decision (local vs remote, which interface, what drove the choice), cache comparison, DNS comparison, and the UPSERT call. It overrides `--quiet` so you can run it ad-hoc while cron keeps using its silent entry.
 
-# For persistent debugging (UDM)
-echo 'DEBUG=1' >> /data/.dddns/.env
+```bash
+# One-off verbose run
+dddns update --verbose
+
+# Combine with --dry-run for safe inspection
+dddns update --verbose --dry-run
+
+# Works on an installed cron host too — bypasses the boot-script's --quiet
+sudo /usr/local/bin/dddns update --verbose
 ```
 
 ### Check All Components
 
 ```bash
 #!/bin/bash
-# Debug script
+# Triage snapshot — safe to paste into an issue (see --probe for a
+# more structured privacy-safe version on UniFi)
 
 echo "=== Environment ==="
 uname -a
@@ -714,7 +780,9 @@ curl -s https://checkip.amazonaws.com
 echo
 
 echo "=== AWS Access ==="
-aws route53 list-hosted-zones --profile dddns --query "HostedZones[0].Id"
+# Note: 'aws' CLI reads ~/.aws/credentials or the named profile, separate
+# from dddns's own config. Only useful as a smoke test of the account.
+aws route53 list-hosted-zones --query "HostedZones[0].Id"
 echo
 
 echo "=== Current DNS ==="
@@ -723,11 +791,11 @@ dig +short $HOSTNAME
 echo
 
 echo "=== Cached IP ==="
-cat /tmp/dddns-last-ip.txt 2>/dev/null || echo "No cache"
+cat /data/.dddns/last-ip.txt 2>/dev/null || cat ~/.dddns/last-ip.txt 2>/dev/null || echo "No cache"
 echo
 
 echo "=== Test Update ==="
-dddns update --dry-run
+dddns update --verbose --dry-run
 ```
 
 ## Common Error Messages
@@ -790,8 +858,14 @@ If these solutions don't resolve your issue:
    ```bash
    dddns --version > debug.log
    dddns config check >> debug.log 2>&1
-   DEBUG=1 dddns update --dry-run >> debug.log 2>&1
-   tail -100 /var/log/dddns.log >> debug.log
+   dddns update --verbose --dry-run >> debug.log 2>&1
+   journalctl -t dddns -n 100 --no-pager >> debug.log   # cron mode
+   journalctl -u dddns -n 100 --no-pager >> debug.log   # serve mode
+   ```
+
+   On UniFi, the installer's privacy-safe probe is usually enough on its own:
+   ```bash
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --probe > debug.log
    ```
 
 2. **Check GitHub Issues**:
@@ -812,8 +886,12 @@ If these solutions don't resolve your issue:
 
 2. **Monitor Logs**:
    ```bash
-   # Check for errors weekly
-   grep -i error /var/log/dddns.log
+   # Check for recent errors (cron mode)
+   journalctl -t dddns --since "1 week ago" -p err
+
+   # Check for recent errors (serve mode — daemon + per-request)
+   journalctl -u dddns --since "1 week ago" -p err
+   grep '"error":' /var/log/dddns-audit.log | tail -20
    ```
 
 3. **Backup Configuration**:

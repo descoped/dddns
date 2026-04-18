@@ -52,3 +52,6 @@ dist/
 # User-local deployment values — never commit these; pass via `-var` or a local .tfvars file
 deploy/**/terraform.tfvars
 deploy/**/*.local.tfvars
+
+# Ephemeral Claude Code session handoffs (llm-skills/session-snapshot)
+.claude/session-state/

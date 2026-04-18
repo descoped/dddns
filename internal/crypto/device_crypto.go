@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -12,7 +13,26 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// deviceProbeTimeout bounds the platform-specific device-ID probes so a
+// hung system utility (e.g. macOS system_profiler blocked on IORegistry)
+// can't stall dddns startup indefinitely.
+const deviceProbeTimeout = 5 * time.Second
+
+// probeOutput runs cmd with a bounded context and returns stdout. Returns
+// empty + false if the command errored or timed out — caller falls back
+// to the next probe in its chain.
+func probeOutput(name string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), deviceProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return "", false
+	}
+	return string(out), true
+}
 
 // GetDeviceKey derives a unique encryption key from device-specific data.
 // It dispatches to a platform-specific collector, falling back to a
@@ -93,8 +113,8 @@ func deviceIDLinux() (string, bool) {
 
 // deviceIDDarwin reads the Hardware UUID, then the IOPlatformSerialNumber.
 func deviceIDDarwin() (string, bool) {
-	if out, err := exec.Command("system_profiler", "SPHardwareDataType").Output(); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
+	if out, ok := probeOutput("system_profiler", "SPHardwareDataType"); ok {
+		for _, line := range strings.Split(out, "\n") {
 			if strings.Contains(line, "Hardware UUID:") {
 				parts := strings.Split(line, ":")
 				if len(parts) > 1 {
@@ -104,8 +124,8 @@ func deviceIDDarwin() (string, bool) {
 		}
 	}
 
-	if out, err := exec.Command("ioreg", "-l").Output(); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
+	if out, ok := probeOutput("ioreg", "-l"); ok {
+		for _, line := range strings.Split(out, "\n") {
 			if strings.Contains(line, "IOPlatformSerialNumber") {
 				parts := strings.Split(line, "=")
 				if len(parts) > 1 {
@@ -121,8 +141,8 @@ func deviceIDDarwin() (string, bool) {
 // deviceIDWindows reads the ComputerSystemProduct UUID via wmic, then
 // falls back to the MachineGuid registry value.
 func deviceIDWindows() (string, bool) {
-	if out, err := exec.Command("wmic", "csproduct", "get", "UUID").Output(); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
+	if out, ok := probeOutput("wmic", "csproduct", "get", "UUID"); ok {
+		for _, line := range strings.Split(out, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || line == "UUID" || strings.Contains(line, "UUID") {
 				continue
@@ -131,8 +151,8 @@ func deviceIDWindows() (string, bool) {
 		}
 	}
 
-	if out, err := exec.Command("cmd", "/c", "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid").Output(); err == nil {
-		for _, line := range strings.Split(string(out), "\n") {
+	if out, ok := probeOutput("cmd", "/c", "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"); ok {
+		for _, line := range strings.Split(out, "\n") {
 			if !strings.Contains(line, "MachineGuid") {
 				continue
 			}

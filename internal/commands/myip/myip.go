@@ -15,11 +15,15 @@ var httpClient = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
+// checkipURL is the endpoint consulted by GetPublicIP. Overridable in
+// tests via httptest.NewServer; production callers must not change it.
+var checkipURL = "https://checkip.amazonaws.com"
+
 // GetPublicIP retrieves the public IP for current network from checkip.amazonaws.com
 // and validates that it's a usable public IPv4 address. The provided ctx
 // bounds the HTTP call so a SIGTERM cancels it immediately.
 func GetPublicIP(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://checkip.amazonaws.com", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkipURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("build public ip request: %w", err)
 	}
@@ -29,7 +33,14 @@ func GetPublicIP(ctx context.Context) (string, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checkip returned HTTP %d", resp.StatusCode)
+	}
+
+	// checkip.amazonaws.com returns a bare IPv4 address plus a trailing
+	// newline (~16 bytes). Cap the read at 64 bytes so a hostile endpoint
+	// can't exhaust memory by streaming megabytes into a string allocation.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
 	if err != nil {
 		return "", fmt.Errorf("failed to read public ip response: %w", err)
 	}

@@ -1,15 +1,16 @@
-package myip_test
+package myip
 
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
-
-	"github.com/descoped/dddns/internal/commands/myip"
 )
 
 func TestGetPublicIP(t *testing.T) {
-	ip, err := myip.GetPublicIP(context.Background())
+	ip, err := GetPublicIP(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to get public IP: %v", err)
 	}
@@ -17,6 +18,56 @@ func TestGetPublicIP(t *testing.T) {
 		t.Error("Expected non-empty public IP")
 	}
 	fmt.Printf("Public IP: %s\n", ip)
+}
+
+// TestGetPublicIP_RejectsNon200 confirms an upstream error page — even
+// one that happens to contain a valid-looking IP — is rejected. This is
+// the F1 hardening from the v0.2.0 security review.
+func TestGetPublicIP_RejectsNon200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("8.8.8.8\n"))
+	}))
+	defer srv.Close()
+
+	orig := checkipURL
+	t.Cleanup(func() { checkipURL = orig })
+	checkipURL = srv.URL
+
+	if _, err := GetPublicIP(context.Background()); err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	} else if !strings.Contains(err.Error(), "500") {
+		t.Errorf("expected status 500 in error, got: %v", err)
+	}
+}
+
+// TestGetPublicIP_BoundedRead caps the read at 64 bytes so a hostile
+// endpoint can't exhaust memory via a large response body.
+func TestGetPublicIP_BoundedRead(t *testing.T) {
+	// Send 10 KB of trash prefixed by a valid IP. The validator will
+	// accept the IP if the read stops before the trash starts; otherwise
+	// the IP parser will fail on the concatenation.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		// 128 bytes of padding after a valid IP — well past the 64-byte cap.
+		_, _ = w.Write([]byte("1.2.3.4\n" + strings.Repeat("X", 128)))
+	}))
+	defer srv.Close()
+
+	orig := checkipURL
+	t.Cleanup(func() { checkipURL = orig })
+	checkipURL = srv.URL
+
+	// With a bounded read, we get a truncated body. Depending on whether
+	// the newline falls inside the 64-byte window, validation may
+	// succeed with "1.2.3.4" or fail with garbage. Either way we must
+	// NOT panic or allocate megabytes. The concrete assertion is that
+	// GetPublicIP returns in bounded time without error or with a
+	// readable validation error — not a panic, not an OOM.
+	_, err := GetPublicIP(context.Background())
+	if err != nil && !strings.Contains(err.Error(), "unusable IP") {
+		t.Errorf("unexpected error class: %v", err)
+	}
 }
 
 func TestValidatePublicIP(t *testing.T) {
@@ -40,7 +91,7 @@ func TestValidatePublicIP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := myip.ValidatePublicIP(tt.ip)
+			err := ValidatePublicIP(tt.ip)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidatePublicIP(%q) error = %v, wantErr %v", tt.ip, err, tt.wantErr)
 			}

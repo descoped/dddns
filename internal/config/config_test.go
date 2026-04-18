@@ -161,6 +161,37 @@ func TestCreateDefaultConfig_InvalidPath(t *testing.T) {
 	}
 }
 
+// TestLoadConfig_RejectsPermissive — Load() must refuse to read a
+// plaintext config with permissions looser than 0600. The file holds AWS
+// credentials and a world-readable copy is a local privilege escalation
+// vector if dddns runs alongside untrusted local accounts.
+func TestLoadConfig_RejectsPermissive(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	content := `aws_region: "us-east-1"
+aws_access_key: "AKIATEST"
+aws_secret_key: "SECRETTEST"
+hosted_zone_id: "Z1234567890ABC"
+hostname: "test.example.com"
+ttl: 300`
+	if err := os.WriteFile(configFile, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Loosen perms after write so we hit the Load-time check.
+	if err := os.Chmod(configFile, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config.SetActivePath(configFile)
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected Load to reject 0644 config, got nil")
+	}
+	if !strings.Contains(err.Error(), "permissions") {
+		t.Errorf("expected permission error, got: %v", err)
+	}
+}
+
 // TestLoadConfig_WithServerBlock verifies the new `server:` block parses
 // correctly and round-trips into a *ServerConfig on Config.
 func TestLoadConfig_WithServerBlock(t *testing.T) {

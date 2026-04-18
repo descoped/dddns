@@ -180,7 +180,10 @@ func (r *Route53Client) do(req *http.Request, payloadHash string, _ []byte) ([]b
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	// Route53 responses are typically <10 KB (a single record's metadata).
+	// Cap at 1 MiB so a compromised endpoint or MITM can't exhaust the
+	// ~20 MB RAM budget on UDM / UDR devices by streaming a giant payload.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}

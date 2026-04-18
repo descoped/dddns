@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/descoped/dddns/internal/config"
@@ -109,7 +111,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.emit(entry)
 		return
 	}
-	if hostname != h.cfg.Hostname {
+	// RFC 1035 §2.3.3: DNS names are case-insensitive. strings.EqualFold
+	// (ASCII fold) is correct here — hostnames are ASCII-only per RFC 952.
+	if !strings.EqualFold(hostname, h.cfg.Hostname) {
 		entry.Action = "nohost"
 		h.writeDyndns(w, "nohost", "")
 		h.emit(entry)
@@ -177,12 +181,19 @@ func (h *Handler) writeDyndns(w http.ResponseWriter, code, ip string) {
 // are swallowed — failure to emit must not prevent us from responding
 // to the client.
 func (h *Handler) emit(entry AuditEntry) {
-	_ = h.audit.Write(entry)
-	_ = h.status.Write(StatusSnapshot{
+	// Audit and status writes must not block the response, but silent
+	// failure erodes forensic value. Log to stderr (journaled by systemd)
+	// so operators see write-side errors without the client waiting.
+	if err := h.audit.Write(entry); err != nil {
+		log.Printf("serve: audit write failed: %v", err)
+	}
+	if err := h.status.Write(StatusSnapshot{
 		LastRequestAt:   h.now(),
 		LastRemoteAddr:  entry.RemoteAddr,
 		LastAuthOutcome: entry.AuthOutcome,
 		LastAction:      entry.Action,
 		LastError:       entry.Err,
-	})
+	}); err != nil {
+		log.Printf("serve: status write failed: %v", err)
+	}
 }

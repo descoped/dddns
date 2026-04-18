@@ -110,11 +110,24 @@ func Load() (*Config, error) {
 		return cfg, nil
 	}
 
-	data, err := os.ReadFile(configFile)
+	// Permission check BEFORE read: plaintext config holds AWS credentials,
+	// so a world-readable file is a local-privilege-escalation vector on any
+	// host where dddns runs alongside untrusted local accounts. Mirrors the
+	// check LoadSecure performs on config.secure.
+	info, err := os.Stat(configFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return cfg, nil
 		}
+		return nil, fmt.Errorf("stat config: %w", err)
+	}
+	if mode := info.Mode().Perm(); mode != constants.ConfigFilePerm {
+		return nil, fmt.Errorf("config file %s has permissions %o, must be %o (chmod 600 %s)",
+			configFile, mode, constants.ConfigFilePerm, configFile)
+	}
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {

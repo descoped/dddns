@@ -164,6 +164,21 @@ func TestHandler_WrongHostname(t *testing.T) {
 	}
 }
 
+// TestHandler_HostnameCaseInsensitive — DNS names are case-insensitive
+// per RFC 1035 §2.3.3. A mis-configured inadyn sending HOME.EXAMPLE.COM
+// should match a config value of home.example.com and update normally,
+// not be rejected as "nohost".
+func TestHandler_HostnameCaseInsensitive(t *testing.T) {
+	f := newFixture(t)
+	f.updaterResult = &updater.Result{Action: "nochg-cache", NewIP: testPublicIP, Hostname: testHostname}
+	upper := strings.ToUpper(testHostname)
+	req := newReq(t, map[string]string{"hostname": upper}, testSecretV)
+	w := f.do(req, "127.0.0.1:54321")
+	if got := strings.TrimSpace(w.Body.String()); got != "nochg "+testPublicIP {
+		t.Errorf("body = %q, want nochg %s — handler should fold case", got, testPublicIP)
+	}
+}
+
 func TestHandler_UpdatedGood(t *testing.T) {
 	f := newFixture(t)
 	f.updaterResult = &updater.Result{Action: "updated", NewIP: testPublicIP, Hostname: testHostname}

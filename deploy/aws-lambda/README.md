@@ -46,29 +46,64 @@ client-supplied values" posture the serve mode enforces with
 - **Go 1.26+** to build the Lambda binary (only needed on the deploy host; end users never compile).
 - **Route53 hosted zone** already containing the A record you want to update. The IAM policy scopes the Lambda to UPSERT-only on exactly that one record.
 
+## Configure your deployment
+
+Copy `tofu/terraform.tfvars.example` → `tofu/terraform.tfvars` and
+fill in your values. The file is gitignored (both `terraform.tfvars`
+and `*.local.tfvars` under `deploy/**/`), so your real zone ID,
+hostname, and any other deployment-specific values never reach git.
+
+```bash
+cd deploy/aws-lambda/tofu
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars      # set hosted_zone_id and hostname at minimum
+```
+
+Only two values are strictly required: `hosted_zone_id` and
+`hostname`. Everything else has a default — see `variables.tf` for
+the full list or `terraform.tfvars.example` for the commented menu.
+
+### AWS credentials
+
+The AWS provider reads credentials from the standard AWS CLI
+locations — you don't need to configure anything in this module.
+Whichever account your `aws sts get-caller-identity` resolves to is
+the one `tofu apply` will deploy into.
+
+If you use named profiles (`aws configure --profile descoped`),
+select one at apply time:
+
+```bash
+# Named profile
+AWS_PROFILE=descoped tofu apply
+
+# Or export for the whole shell session
+export AWS_PROFILE=descoped
+tofu apply
+```
+
+If you have only a default profile, no extra step needed — just
+`tofu apply`.
+
 ## Three-step deploy
 
-From the repository root:
+From the repository root, assuming you've configured `terraform.tfvars`
+as above:
 
 ```bash
 # 1. Build the Lambda zip (produces deploy/aws-lambda/dist/lambda.zip)
 just build-aws-lambda
 
-# 2. Apply the OpenTofu module. Pass your deployment-specific values
-#    as variables. None of these have defaults — the module is a
-#    generic template, not a personalised config.
+# 2. Apply the OpenTofu module. tofu auto-loads terraform.tfvars.
 cd deploy/aws-lambda/tofu
 tofu init
-tofu apply \
-    -var "hosted_zone_id=Z1ABCDEFGHIJKL" \
-    -var "hostname=home.example.com" \
-    -var "aws_region=us-east-1"
+AWS_PROFILE=descoped tofu apply   # or just 'tofu apply' if using default profile
 
 # 3. Rotate the shared secret. The tofu apply creates the SSM
 #    parameter with a random placeholder; the helper replaces it
 #    with a fresh 256-bit value and prints it for paste.
 cd ..
-./scripts/rotate-secret.sh
+AWS_PROFILE=descoped ./scripts/rotate-secret.sh
 ```
 
 The rotate script prints the new secret in a framed block. Copy it
@@ -154,9 +189,7 @@ cleanly removes it all (Lambda, API, SSM param, IAM role, log group):
 
 ```bash
 cd deploy/aws-lambda/tofu
-tofu destroy \
-    -var "hosted_zone_id=Z1ABCDEFGHIJKL" \
-    -var "hostname=home.example.com"
+AWS_PROFILE=descoped tofu destroy   # picks up terraform.tfvars automatically
 ```
 
 This does **not** touch your Route53 records — the A record you

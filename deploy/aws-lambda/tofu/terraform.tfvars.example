@@ -1,0 +1,67 @@
+# Copy this file to terraform.tfvars and fill in your values.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#   $EDITOR terraform.tfvars
+#   tofu apply
+#
+# terraform.tfvars is auto-loaded by tofu — no -var-file flag needed.
+# The .gitignore in the repo root excludes terraform.tfvars (and
+# *.local.tfvars) under deploy/**/, so your real values never reach
+# git even under `git add -A`.
+#
+# The only two required values are hosted_zone_id and hostname.
+# Everything else has a sensible default in variables.tf.
+
+# ─── Required ─────────────────────────────────────────────────────────
+# Your Route53 hosted zone ID (the 'Z…' identifier from the AWS
+# console, not the zone name).
+hosted_zone_id = "Z1ABCDEFGHIJKL"
+
+# The FQDN of the A record the Lambda will UPSERT. Must already exist
+# in the hosted zone (or tofu apply will succeed but the first push
+# from the Lambda will create it — Route53 UPSERT creates-or-updates).
+hostname = "home.example.com"
+
+# ─── Optional (defaults shown) ────────────────────────────────────────
+# AWS region for Lambda + API Gateway + SSM. Route53 itself is global,
+# so this only affects where the Lambda runs. Pick whatever's closest
+# to you for lower cold-start latency.
+# aws_region = "us-east-1"
+
+# Resource name prefix. Useful if you want multiple independent
+# deployments (e.g. one per hostname).
+# name_prefix = "dddns"
+
+# SSM parameter path for the shared secret. Must start with '/'.
+# ssm_parameter_name = "/dddns/shared_secret"
+
+# Reserved concurrent executions — a hard ceiling against cost
+# runaway if a misconfigured client hammers the endpoint. 2 is
+# plenty for a single DDNS push stream; raise only if you have
+# many clients pushing to the same Lambda.
+# reserved_concurrency = 2
+
+# CloudWatch Logs retention.
+# log_retention_days = 7
+
+# Lambda memory / timeout.
+# lambda_memory_mb       = 128
+# lambda_timeout_seconds = 10
+
+# API Gateway throttling (requests per second and burst ceiling).
+# Inadyn typically pushes a few times per hour; these defaults leave
+# plenty of headroom while still capping any accidental flood.
+# throttle_rate  = 10
+# throttle_burst = 100
+
+# Path to the pre-built Lambda zip. The 'just build-aws-lambda'
+# recipe produces this file at the default location.
+# lambda_zip_path = "../dist/lambda.zip"
+
+# Additional tags merged into the module's built-in 'app=dddns'
+# and 'hostname=<...>' tags on every created resource. Useful for
+# cost allocation reports.
+# tags = {
+#   owner = "me"
+#   env   = "home"
+# }

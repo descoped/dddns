@@ -15,7 +15,7 @@ import (
 	"github.com/descoped/dddns/internal/dns"
 	"github.com/descoped/dddns/internal/profile"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Configuration command flags.

@@ -4,8 +4,14 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/descoped/dddns/internal/config"
+	"github.com/descoped/dddns/internal/constants"
+	"github.com/spf13/cobra"
 )
 
 // newStubServer spins up an httptest server that returns the supplied
@@ -81,6 +87,46 @@ func TestServeTest_NetworkError(t *testing.T) {
 	err := performServeTest("http://127.0.0.1:1", "test.example.com", "secret", "1.2.3.4", &buf)
 	if err == nil {
 		t.Error("expected error for unreachable target")
+	}
+}
+
+// TestRunServeTest_RejectsMissingServerBlock covers the fail-closed
+// contract: running `dddns serve test` against a config without a
+// server block must return a clear diagnostic, not panic on a nil
+// cfg.Server.
+func TestRunServeTest_RejectsMissingServerBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "" +
+		"aws_region: \"us-east-1\"\n" +
+		"aws_access_key: \"AKIAIOSFODNN7EXAMPLE\"\n" +
+		"aws_secret_key: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n" +
+		"hosted_zone_id: \"Z1ABCDEFGHIJKL\"\n" +
+		"hostname: \"test.example.com\"\n" +
+		"ttl: 300\n" +
+		"ip_cache_file: \"" + filepath.Join(dir, "last-ip.txt") + "\"\n"
+	if err := os.WriteFile(path, []byte(content), constants.ConfigFilePerm); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	config.SetActivePath(path)
+	t.Cleanup(func() { config.SetActivePath("") })
+
+	origHost, origIP := serveTestHostname, serveTestIP
+	t.Cleanup(func() {
+		serveTestHostname = origHost
+		serveTestIP = origIP
+	})
+	serveTestHostname = ""
+	serveTestIP = "203.0.113.10"
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runServeTest(cmd, nil)
+	if err == nil {
+		t.Fatal("runServeTest accepted config with no server block")
+	}
+	if !strings.Contains(err.Error(), "serve mode not configured") {
+		t.Errorf("error should cite missing server block, got: %v", err)
 	}
 }
 

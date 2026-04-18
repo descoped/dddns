@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"time"
 
 	"github.com/descoped/dddns/internal/config"
@@ -44,74 +46,81 @@ func runVerify(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	fmt.Println("=== DNS Verification ===")
-	fmt.Println()
+	formatVerifyReport(os.Stdout, report, cfg.TTL)
+	return nil
+}
+
+// formatVerifyReport renders report to w in the human-readable shape
+// the operator reads to decide whether the DNS setup is healthy.
+// Extracted from runVerify so tests can assert on the formatter
+// without exercising the real Route53/DNS network stack.
+func formatVerifyReport(w io.Writer, report *verify.Report, ttl int64) {
+	fmt.Fprintln(w, "=== DNS Verification ===")
+	fmt.Fprintln(w)
 
 	// 1. Public IP.
-	fmt.Printf("Your public IP:     %s\n", report.PublicIP)
+	fmt.Fprintf(w, "Your public IP:     %s\n", report.PublicIP)
 
 	// 2. Route53.
 	if report.Route53Error != nil {
-		fmt.Printf("Route53 record:     NOT FOUND (%v)\n", report.Route53Error)
+		fmt.Fprintf(w, "Route53 record:     NOT FOUND (%v)\n", report.Route53Error)
 	} else {
-		fmt.Printf("Route53 record:     %s", report.Route53IP)
+		fmt.Fprintf(w, "Route53 record:     %s", report.Route53IP)
 		if report.Route53IP == report.PublicIP {
-			fmt.Printf(" ✓\n")
+			fmt.Fprintf(w, " ✓\n")
 		} else {
-			fmt.Printf(" ✗ (mismatch)\n")
+			fmt.Fprintf(w, " ✗ (mismatch)\n")
 		}
 	}
 
 	// 3. Stdlib DNS resolver.
-	fmt.Printf("Public DNS lookup:  ")
+	fmt.Fprintf(w, "Public DNS lookup:  ")
 	switch {
 	case report.StdlibError != nil:
-		fmt.Printf("FAILED (%v)\n", report.StdlibError)
+		fmt.Fprintf(w, "FAILED (%v)\n", report.StdlibError)
 	case report.StdlibIP == "":
-		fmt.Printf("NO A RECORD\n")
+		fmt.Fprintf(w, "NO A RECORD\n")
 	default:
-		fmt.Printf("%s", report.StdlibIP)
+		fmt.Fprintf(w, "%s", report.StdlibIP)
 		if report.StdlibIP == report.PublicIP {
-			fmt.Printf(" ✓\n")
+			fmt.Fprintf(w, " ✓\n")
 		} else {
-			fmt.Printf(" ✗ (mismatch)\n")
+			fmt.Fprintf(w, " ✗ (mismatch)\n")
 		}
 	}
 
 	// 4. Named resolvers.
-	fmt.Println()
-	fmt.Println("DNS Server Checks:")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "DNS Server Checks:")
 	for _, r := range report.Resolvers {
-		fmt.Printf("  %s: ", r.Name)
+		fmt.Fprintf(w, "  %s: ", r.Name)
 		switch {
 		case r.Error != nil:
-			fmt.Printf("FAILED\n")
+			fmt.Fprintf(w, "FAILED\n")
 		case r.IP == "":
-			fmt.Printf("NO RECORD\n")
+			fmt.Fprintf(w, "NO RECORD\n")
 		default:
-			fmt.Printf("%s", r.IP)
+			fmt.Fprintf(w, "%s", r.IP)
 			if r.IP == report.PublicIP {
-				fmt.Printf(" ✓\n")
+				fmt.Fprintf(w, " ✓\n")
 			} else {
-				fmt.Printf(" ✗\n")
+				fmt.Fprintf(w, " ✗\n")
 			}
 		}
 	}
 
 	// Summary.
-	fmt.Println()
-	fmt.Println("=== Summary ===")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "=== Summary ===")
 	switch {
 	case report.Route53Error != nil || report.Route53IP == "":
-		fmt.Println("⚠ No Route53 record found - run 'dddns update' to create it")
+		fmt.Fprintln(w, "⚠ No Route53 record found - run 'dddns update' to create it")
 	case report.Route53IP == report.PublicIP:
-		fmt.Println("✓ Route53 record is up to date")
+		fmt.Fprintln(w, "✓ Route53 record is up to date")
 	default:
-		fmt.Printf("✗ Route53 record (%s) doesn't match current IP (%s)\n", report.Route53IP, report.PublicIP)
-		fmt.Println("  Run 'dddns update' to fix this")
+		fmt.Fprintf(w, "✗ Route53 record (%s) doesn't match current IP (%s)\n", report.Route53IP, report.PublicIP)
+		fmt.Fprintln(w, "  Run 'dddns update' to fix this")
 	}
 
-	fmt.Printf("\nNote: DNS changes can take up to %d seconds to propagate globally.\n", cfg.TTL)
-
-	return nil
+	fmt.Fprintf(w, "\nNote: DNS changes can take up to %d seconds to propagate globally.\n", ttl)
 }

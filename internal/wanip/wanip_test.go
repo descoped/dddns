@@ -36,6 +36,17 @@ func mockInterfaces(t *testing.T, byName map[string][]net.Addr) {
 	}
 }
 
+// mockListInterfaceNames replaces the interface enumeration used by the
+// fallback path. Pass the names whose addresses should be scanned.
+func mockListInterfaceNames(t *testing.T, names []string) {
+	t.Helper()
+	orig := listInterfaceNames
+	t.Cleanup(func() { listInterfaceNames = orig })
+	listInterfaceNames = func() ([]string, error) {
+		return names, nil
+	}
+}
+
 // mockRouteFile writes content to a tempdir file and points
 // defaultRoutePath at it.
 func mockRouteFile(t *testing.T, content string) {
@@ -139,19 +150,70 @@ eth0	0000A8C0	00000000	0001	0	0	100	00FFFFFF	0	0	0
 	}
 }
 
-func TestFromInterface_AutoDetect_NoDefaultRoute(t *testing.T) {
+func TestFromInterface_AutoDetect_NoDefaultRoute_NoPublicAnywhere(t *testing.T) {
 	mockRouteFile(t, "Iface\tDestination\n")
+	mockInterfaces(t, map[string][]net.Addr{
+		"eth0": {ipNet("192.168.1.1/24")},
+	})
+	mockListInterfaceNames(t, []string{"eth0"})
 	if _, err := FromInterface(""); err == nil {
-		t.Error("expected error when no default route present")
+		t.Error("expected error when no default route and no interface has a public IPv4")
 	}
 }
 
-func TestFromInterface_AutoDetect_MissingFile(t *testing.T) {
+func TestFromInterface_AutoDetect_MissingFile_NoPublicAnywhere(t *testing.T) {
 	orig := defaultRoutePath
 	t.Cleanup(func() { defaultRoutePath = orig })
 	defaultRoutePath = filepath.Join(t.TempDir(), "does-not-exist")
+	mockListInterfaceNames(t, nil)
 	if _, err := FromInterface(""); err == nil {
-		t.Error("expected error when route file is missing")
+		t.Error("expected error when route file is missing and fallback finds nothing")
+	}
+}
+
+// TestFromInterface_AutoDetect_FallbackWhenNoDefaultRoute exercises the
+// UDR7 case: /proc/net/route has no default entry (default lives in a
+// per-WAN routing table under policy-based routing), but eth4 carries the
+// public IPv4 anyway. The fallback scan must find it.
+func TestFromInterface_AutoDetect_FallbackWhenNoDefaultRoute(t *testing.T) {
+	mockRouteFile(t, `Iface	Destination	Gateway	Flags	RefCnt	Use	Metric	Mask	MTU	Window	IRTT
+br0	0000A8C0	00000000	0001	0	0	100	00FFFFFF	0	0	0
+`)
+	mockInterfaces(t, map[string][]net.Addr{
+		"br0":  {ipNet("192.168.1.1/24")},
+		"eth4": {ipNet(testPublicIP + "/21")},
+	})
+	mockListInterfaceNames(t, []string{"br0", "eth4"})
+
+	ip, err := FromInterface("")
+	if err != nil {
+		t.Fatalf("expected fallback to find eth4: %v", err)
+	}
+	if ip.String() != testPublicIP {
+		t.Errorf("got %s, want %s", ip, testPublicIP)
+	}
+}
+
+// TestFromInterface_AutoDetect_DefaultRouteWinsOverFallback is the
+// regression: when a valid default route is present, the fallback must
+// not fire even if it would pick a different interface.
+func TestFromInterface_AutoDetect_DefaultRouteWinsOverFallback(t *testing.T) {
+	const wanViaDefaultRoute = "198.51.100.7" // RFC 5737 TEST-NET-2
+	mockRouteFile(t, `Iface	Destination	Gateway	Flags	RefCnt	Use	Metric	Mask	MTU	Window	IRTT
+eth8	00000000	0101A8C0	0003	0	0	100	00000000	0	0	0
+`)
+	mockInterfaces(t, map[string][]net.Addr{
+		"eth8": {ipNet(wanViaDefaultRoute + "/24")},
+		"ppp0": {ipNet(testPublicIP + "/32")},
+	})
+	mockListInterfaceNames(t, []string{"ppp0", "eth8"}) // ppp0 first — fallback would pick it
+
+	ip, err := FromInterface("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ip.String() != wanViaDefaultRoute {
+		t.Errorf("got %s, want %s (default-route path must win over fallback)", ip, wanViaDefaultRoute)
 	}
 }
 
@@ -170,9 +232,9 @@ func TestIsPublicIPv4(t *testing.T) {
 		{"169.254.1.1", false},
 		{"100.64.1.1", false}, // CGNAT
 		{"0.0.0.0", false},
-		{"224.0.0.1", false},   // multicast
+		{"224.0.0.1", false},       // multicast
 		{"255.255.255.255", false}, // broadcast
-		{"2001:db8::1", false}, // IPv6
+		{"2001:db8::1", false},     // IPv6
 	}
 	for _, tt := range tests {
 		got := isPublicIPv4(net.ParseIP(tt.ip))

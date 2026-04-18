@@ -42,12 +42,18 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 - **Automatic Platform Detection** - Adjusts paths and behavior per platform
 
 ### 📦 Deployment
-- **Single Binary** - No dependencies, <10MB size
-- **Low Memory** - <20MB runtime usage
+
+Three deployment forms, pick whichever matches your setup:
+
+- **Cron mode** — on-device polling every 30 minutes. The proven default for UDM / UDR / Raspberry Pi. Output flows through `journalctl -t dddns`; rotation handled by journald.
+- **Serve mode** — on-device event-driven listener for a same-host DDNS client (ddclient, a user script, a Docker sidecar). Supervised by systemd. **Experimental on UniFi Dream** — UniFi's built-in inadyn can't reach the loopback listener; use cron or Lambda there.
+- **Lambda mode** (v0.3.0+) — AWS Lambda + API Gateway endpoint. Event-driven from the cloud, provisioned via OpenTofu. Ideal when UniFi UI's Custom Dynamic DNS is the push source. Costs ~$0/month at household scale. See [`deploy/aws-lambda/README.md`](deploy/aws-lambda/README.md).
+
+Other deployment traits:
+- **Single Binary** - No dependencies, <10MB size (6MB for the Lambda zip)
+- **Low Memory** - <20MB runtime usage; `GOMEMLIMIT=16MiB` ceiling on serve + Lambda
 - **Boot Persistence** - Survives firmware updates on UDM
-- **Cron Integration** - Automated scheduling built-in
-- **One-Line Installation** - Simple curl install for UDM
-- **Logging** - Comprehensive logs with rotation
+- **Cross-platform builds** - GoReleaser produces Linux / macOS / Windows / UDM artefacts on every tag
 
 
 ## Quick Start
@@ -57,17 +63,49 @@ Perfect for VPN access, home servers, remote management, or any service that nee
 ### Ubiquiti Dream Machine (UDM/UDR)
 
 ```bash
-# One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
+# One-line installation (prompts for cron or serve mode on fresh install)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 
 # Configure
 dddns config init
 
 # Test
 dddns update --dry-run
+
+# Privacy-safe self-diagnosis (great to paste in a GitHub issue)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --probe
 ```
 
 > **⚠️ Compatibility Note**: Check [supported models and requirements](docs/installation.md#supported-models) before installation.
+
+### AWS Lambda (v0.3.0+, any cloud-hosted push target)
+
+If the DDNS push source is UniFi UI's Custom Dynamic DNS entry and
+you don't want to run anything on-device, deploy dddns as an AWS
+Lambda behind API Gateway. The OpenTofu module at
+[`deploy/aws-lambda/tofu/`](deploy/aws-lambda/tofu/) provisions the
+whole stack in one apply — Lambda, API Gateway, IAM, SSM parameter,
+CloudWatch log group.
+
+```bash
+# Build the Lambda zip (Linux arm64, provided.al2023)
+just build-aws-lambda
+
+# Configure your deployment (zone ID + hostname)
+cd deploy/aws-lambda/tofu
+cp terraform.tfvars.example terraform.tfvars
+$EDITOR terraform.tfvars
+
+# Deploy
+tofu init && tofu apply
+
+# Rotate secret and paste into UniFi UI
+cd .. && ./scripts/rotate-secret.sh
+```
+
+Household-scale deployments stay in the AWS free tier. See
+[`deploy/aws-lambda/README.md`](deploy/aws-lambda/README.md) for
+the full guide, cost breakdown, and teardown instructions.
 
 ### macOS
 
@@ -170,8 +208,9 @@ The flow ensures minimal API calls and only updates DNS when necessary, making i
 
 ### Prerequisites
 
-- Go 1.22+
-- Make
+- Go 1.26+
+- [just](https://github.com/casey/just) (`brew install just` on macOS)
+- [OpenTofu](https://opentofu.org/) 1.6+ (only needed to deploy the AWS Lambda form)
 
 ### Building
 

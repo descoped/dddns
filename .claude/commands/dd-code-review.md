@@ -14,6 +14,7 @@ Perform a deep code quality analysis using clean code engineering principles. Id
 | `security` | `internal/config/`, `internal/crypto/` |
 | `platform` | `internal/profile/`, `internal/wanip/` |
 | `installer` | `scripts/install-on-unifi-os.sh` |
+| `lambda` | `deploy/aws-lambda/` (main.go, handler.go, ssm.go) + `deploy/aws-lambda/tofu/` |
 | `all` | Full codebase — work through one area at a time (order below) |
 | `path/to/file` | Single file or directory |
 
@@ -23,7 +24,7 @@ If no argument, ask the user.
 
 Read files using the Read tool — don't just grep. Understand context, call chains, and module boundaries before flagging anything. **Verify before reporting** — false positives waste time and erode trust.
 
-Work in dependency order: `internal/{crypto,profile,wanip}` → `internal/{config,bootscript}` → `internal/{dns,commands/myip}` → `internal/{updater,server}` → `cmd/` → `scripts/`.
+Work in dependency order: `internal/{crypto,profile,wanip}` → `internal/{config,bootscript}` → `internal/{dns,commands/myip}` → `internal/{updater,server}` → `cmd/` → `scripts/` → `deploy/aws-lambda/`.
 
 For each file or module, evaluate against the categories below. Skip files that are trivially clean (small, focused, well-named).
 
@@ -256,6 +257,9 @@ After presenting the report, ask the user:
 - **systemd supervises `dddns serve` on UDM.** Don't suggest adding in-process supervision, restart loops, or a shell-supervisor pattern — that's what systemd is for.
 - **No backward-compatibility shims.** If code looks like a legacy alias or deprecated wrapper, flag it for deletion, not preservation.
 - **Single-Route53 is the current reality.** Don't suggest "abstract to support other providers" as a finding — that's planned via `ai_docs/0_provider-architecture.md` and is design work, not code-review work.
+- **Lambda deployment is additive, not a replacement.** `deploy/aws-lambda/` reuses the same `internal/dns` signer + client — don't suggest merging the Lambda handler into `internal/server/handler.go`. The two handlers serve different protocols (API Gateway event vs. plain HTTP) and different trust boundaries.
+- **Lambda's SSM client is hand-rolled by design.** Don't suggest pulling in `aws-sdk-go-v2/service/ssm` — the whole point is to keep the Lambda binary under 10 MB and cold-start fast. The signer in `internal/dns/sigv4.go` is the shared primitive.
+- **Lambda IAM policy is already scoped tight.** `deploy/aws-lambda/tofu/iam.tf` uses Route53 condition keys on zone, record name, action, and type, plus an SSM ARN restriction with `kms:ViaService`. Don't flag it as "too permissive" — it's arguably the tightest policy possible for the operation.
 
 ### Quality Check Commands (per area)
 

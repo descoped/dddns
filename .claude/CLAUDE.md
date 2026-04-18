@@ -27,18 +27,26 @@ This file provides guidance to Claude Code when working with dddns.
 ## Architecture
 
 ### Core Flow
-Two run modes, selected at install time (exclusive):
+Three deployment forms, selected by the operator:
 
-**Cron mode** (polling):
+**Cron mode** (polling, on-device):
 1. Resolve current public IP via `cfg.IPSource` — `remote` calls `checkip.amazonaws.com`, `local` reads the WAN interface, `auto` picks based on platform.
 2. Compare with cached IP from last run.
 3. Update Route53 A record if changed.
 4. Cache new IP and exit.
+5. Output piped through `logger -t dddns` to systemd-journald.
 
-**Serve mode** (event-driven, UniFi-only):
-1. `dddns serve` listens on `127.0.0.1:53353` for dyndns v2 requests from UniFi's built-in `inadyn`.
+**Serve mode** (event-driven, on-device same-host bind):
+1. `dddns serve` listens on `127.0.0.1:53353` for dyndns v2 requests from a same-host DDNS client.
 2. Per request: CIDR check → constant-time Basic Auth → hostname match → read local WAN IP (never trust `myip` query param) → Route53 UPSERT → audit log.
 3. Supervised by systemd; restart-on-failure.
+4. **Experimental on UniFi Dream devices** — UniFi's built-in `inadyn` binds with `-b eth4`, which routes `127.0.0.1` through the WAN policy table and cannot reach the listener. Works for Pi / Linux / Docker with a same-host DDNS client.
+
+**Lambda mode** (event-driven, cloud; v0.3.0+):
+1. `deploy/aws-lambda/` package runs behind API Gateway HTTP API.
+2. Per request: Basic Auth against SSM-stored shared secret (60s cache) → constant-time compare → hostname match → publish API Gateway's `requestContext.http.sourceIp` (ignore `myip=` query param entirely) → Route53 UPSERT.
+3. OpenTofu module at `deploy/aws-lambda/tofu/` provisions Lambda + API Gateway + IAM + SSM + CloudWatch.
+4. The right choice when a UniFi Dream device's built-in inadyn is the push source — inadyn can reach a public HTTPS endpoint but not a loopback listener.
 
 ### Project Structure
 ```
@@ -78,16 +86,28 @@ internal/
 ├── commands/myip/            # Public IP detection + ValidatePublicIP
 ├── constants/                # Shared constants
 └── version/                  # Build-time version injection
+
+deploy/                        # Deployment forms (v0.3.0+)
+└── aws-lambda/
+    ├── main.go               # Lambda entry + init-time client construction
+    ├── handler.go            # dyndns v2 handler; ignores myip, publishes sourceIp
+    ├── ssm.go                # Hand-rolled SSM GetParameter (reuses internal/dns SigV4)
+    ├── handler_test.go       # httptest-backed unit tests
+    ├── tofu/                 # OpenTofu module (13 resources, all variables)
+    ├── scripts/rotate-secret.sh  # openssl rand + ssm put-parameter
+    └── README.md             # Operator-facing deploy guide
 ```
 
 ## Key Features Implemented
 
 ### Security
-- ✅ Device-specific AES-256-GCM encryption
+- ✅ Device-specific AES-256-GCM encryption (cron/serve on-device config)
 - ✅ Hardware ID derivation (MAC, UUID, serial)
-- ✅ Secure file permissions (600/400)
-- ✅ No environment variable credentials
-- ✅ AWS profile support via ~/.aws/credentials
+- ✅ Secure file permissions (600/400); config.yaml 0600 enforced at load
+- ✅ Hand-rolled SigV4 signer with STS session-token support (used by both Route53 and SSM)
+- ✅ Constant-time auth compare + (serve) sliding-window lockout
+- ✅ Lambda IAM scoped to one zone + one record + UPSERT-only + one SSM parameter ARN
+- ✅ L6 defense in both serve and Lambda — `myip=` query param never trusted; ground-truth IP used
 
 ### Platform Support
 - ✅ UDM/UDR (ARM64, persistent /data storage)
@@ -99,7 +119,7 @@ internal/
 ### Commands
 ```bash
 # Core commands
-dddns update [--dry-run] [--force] [--quiet]
+dddns update [--dry-run] [--force] [--quiet] [--verbose]
 dddns config init
 dddns config check
 dddns config set-mode {cron|serve}   # Switch run mode; rewrites boot script
@@ -107,7 +127,7 @@ dddns config rotate-secret [--init]  # Rotate serve-mode shared secret
 dddns ip
 dddns verify
 
-# Serve mode (UniFi bridge)
+# Serve mode (same-host bind)
 dddns serve                          # Start listener (blocks)
 dddns serve status                   # Show last request / auth outcome
 dddns serve test                     # Loopback Basic-Auth'd test request
@@ -115,6 +135,25 @@ dddns serve test                     # Loopback Basic-Auth'd test request
 # Security
 dddns secure enable       # Convert to encrypted config
 dddns secure test         # Test encryption
+```
+
+### UniFi installer actions
+```bash
+bash install-on-unifi-os.sh                    # Install or upgrade
+bash install-on-unifi-os.sh --mode cron        # Fresh install / switch to cron
+bash install-on-unifi-os.sh --mode serve       # Fresh install / switch to serve
+bash install-on-unifi-os.sh --force            # Reinstall even if version matches
+bash install-on-unifi-os.sh --probe            # Privacy-safe self-diagnosis
+bash install-on-unifi-os.sh --disable          # Stop update loop; keep binary + config
+bash install-on-unifi-os.sh --uninstall        # Remove binary + install dir; preserve config
+bash install-on-unifi-os.sh --rollback         # Restore previous version from .prev
+```
+
+### AWS Lambda deployment (v0.3.0+)
+```bash
+just build-aws-lambda                          # Linux arm64 zip for provided.al2023
+cd deploy/aws-lambda/tofu && tofu apply        # Creates 13 AWS resources
+./scripts/rotate-secret.sh                     # Rotate shared secret; print for UniFi UI
 ```
 
 ## Configuration
@@ -175,14 +214,16 @@ var Commit = "none"
 
 ## Testing
 
-### Unit Tests
+### Unit Tests (248 tests across 16 packages as of v0.3.0)
 - Config loading and validation (`ServerConfig` fail-closed checks)
 - IP detection and `ValidatePublicIP` stdlib validator
 - Encryption/decryption (`EncryptString`/`DecryptString` round-trip + GCM tamper)
 - Platform detection
-- Route53 mocking
+- Route53 mocking + SigV4 signing (AWS reference-vector tests, with + without session token)
 - Serve-mode handler (CIDR / auth / lockout / audit / status — all `httptest`-backed, no AWS)
-- Boot-script generation per mode
+- Serve-mode memory-leak regression (BenchmarkHandler_HappyPath — tracks allocs/op across releases)
+- Lambda handler (auth / hostname / sourceIp / SSM cache — all `httptest`-backed)
+- Boot-script generation per mode (including journald pipe for cron mode)
 
 ### Integration Tests
 - Real AWS API calls (when credentials available)
@@ -204,28 +245,43 @@ var Commit = "none"
 
 ## Deployment
 
-### UDM Installation
+### UniFi installation (cron or serve)
 ```bash
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-dddns-udm.sh | bash
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 ```
+The installer prompts for run mode on fresh installs, preserves the
+detected mode on upgrade, and supports `--mode cron|serve`. Cron mode
+pipes output through `logger -t dddns` to systemd-journald — the
+legacy `/var/log/dddns.log` is retired as of v0.2.1.
 
-### Cron Setup
+### AWS Lambda deployment
+Provisioned via OpenTofu at `deploy/aws-lambda/tofu/`. Three-step flow:
 ```bash
-*/30 * * * * /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+just build-aws-lambda                                            # build the Lambda zip
+cd deploy/aws-lambda/tofu && tofu init && tofu apply             # 13 AWS resources
+cd .. && ./scripts/rotate-secret.sh                              # rotate shared secret
+# Paste the printed secret into UniFi UI → Dynamic DNS → Password
 ```
+See `deploy/aws-lambda/README.md` for the complete guide.
 
 ## Current Status
 
 ✅ **Completed**
 - Core DNS update functionality
-- Cross-platform support
+- Cross-platform support (Linux, macOS, Windows, UDM)
 - Secure credential storage (AES-256-GCM, device-derived key)
+- Hand-rolled SigV4 signer with session-token support (Route53 + SSM)
 - Platform auto-detection
 - Persistent caching
-- UniFi serve mode (event-driven via inadyn push, systemd-supervised)
+- UniFi serve mode (event-driven via dyndns-v2 push, systemd-supervised)
+- Cron-mode journald routing (`logger -t dddns`, rotation-free)
+- `--verbose` flag on `dddns update` for per-step diagnostics
+- Installer `--probe` (connectivity + firmware version)
+- Installer `--disable` (soft-stop; keeps binary + config)
 - Scoped Route53 IAM policy (record-level UPSERT via condition keys)
-- Secret rotation (`dddns config rotate-secret`)
+- Secret rotation (`dddns config rotate-secret` for serve; `deploy/aws-lambda/scripts/rotate-secret.sh` for Lambda)
 - Mode switching (`dddns config set-mode {cron|serve}`)
+- **AWS Lambda deployment form** (v0.3.0 — API Gateway → Lambda → Route53, full tofu module)
 - GoReleaser integration with SHA-256 release verification
 - Comprehensive documentation
 

@@ -346,15 +346,15 @@ For maintainers: Homebrew formulas are maintained in the separate [homebrew-tap]
 
 After creating a new dddns release:
 1. Go to the homebrew-tap repository
-2. Run `make update-dddns VERSION=vX.Y.Z`
+2. Run the formula update recipe defined in that repo (see its README)
 3. Commit and push the updated formula
 
 ## Building from Source
 
 ### Prerequisites
 
-- Go 1.21 or later
-- Make
+- Go 1.26 or later
+- [just](https://github.com/casey/just) (replaces the old Makefile)
 - Git
 
 ### Build Steps

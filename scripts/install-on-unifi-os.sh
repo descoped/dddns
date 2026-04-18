@@ -52,11 +52,30 @@ readonly NC='\033[0m'
 # Runtime state used by the safety gates. Set by download_binary.
 NEW_BINARY_PATH=""
 
+# Verbose mode. Enabled via --verbose / -v flag or DDDNS_DEBUG=1 env var.
+# When on, commands wrapped with `vexec` emit their stdout/stderr live
+# instead of being silenced; log_info prints [DEBUG] markers.
+VERBOSE="${DDDNS_DEBUG:-0}"
+
 log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 log_error()   { echo -e "${RED}[✗]${NC} $1" >&2; }
 log_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_phase()   { echo -e "${BLUE}[$1]${NC} $2"; }
+log_debug()   { [[ "$VERBOSE" == "1" ]] && echo -e "${YELLOW}[DEBUG]${NC} $1" >&2 || true; }
+
+# vexec runs a command silently by default, or with full stdout/stderr
+# visible when VERBOSE=1. Use for side-effect commands whose output is
+# normally uninteresting but critical when debugging a broken install
+# (systemctl, cron restart, boot script re-run).
+vexec() {
+    if [[ "$VERBOSE" == "1" ]]; then
+        log_debug "exec: $*"
+        "$@"
+    else
+        "$@" >/dev/null 2>&1
+    fi
+}
 
 # ---------------------------------------------------------------------------
 # Platform checks
@@ -190,8 +209,15 @@ download_binary() {
     trap "rm -rf '${temp_dir}'" EXIT
 
     log_phase download "Fetching ${archive_name}..."
-    if ! curl -L -o "${temp_dir}/${archive_name}" "${base_url}/${archive_name}" --progress-bar; then
-        log_error "[download] Failed to fetch ${archive_name}"
+    # -f: fail on HTTP >= 400 instead of writing the error page to disk (so a
+    # missing asset surfaces as "HTTP 404" rather than a confusing "SHA-256
+    # mismatch" two steps later). Progress bar only on a TTY — piped invocation
+    # via `curl | bash` emits line-noise otherwise.
+    local progress
+    if [[ -t 1 ]]; then progress="--progress-bar"; else progress="--silent --show-error"; fi
+    # shellcheck disable=SC2086
+    if ! curl -fL -o "${temp_dir}/${archive_name}" "${base_url}/${archive_name}" ${progress}; then
+        log_error "[download] Failed to fetch ${archive_name} from ${base_url}"
         exit 1
     fi
 
@@ -246,9 +272,10 @@ preflight_binary() {
 
     if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
         log_phase preflight "Validating existing config under new binary..."
-        if ! "${tb}" config check >/dev/null 2>&1; then
+        local check_out
+        if ! check_out=$("${tb}" config check 2>&1); then
             log_error "[preflight] New binary rejected existing config:"
-            "${tb}" config check 2>&1 | sed 's/^/    /' >&2 || true
+            printf '%s\n' "$check_out" | sed 's/^/    /' >&2
             return 1
         fi
         log_success "[preflight] Config loads cleanly"
@@ -291,10 +318,10 @@ rollback_state() {
             restored=$((restored + 1))
         fi
     done
-    /etc/init.d/cron restart >/dev/null 2>&1 || true
-    systemctl daemon-reload >/dev/null 2>&1 || true
+    vexec /etc/init.d/cron restart || true
+    vexec systemctl daemon-reload || true
     if [[ -f /etc/systemd/system/dddns.service ]]; then
-        systemctl restart dddns.service >/dev/null 2>&1 || true
+        vexec systemctl restart dddns.service || true
     fi
     if [[ $restored -eq 0 ]]; then
         log_warning "[rollback] Nothing to restore — no ${PREV_SUFFIX} files found"
@@ -331,9 +358,10 @@ postinstall_smoke() {
     log_success "[smoke] $("${b}" --version 2>/dev/null | head -1)"
 
     if [[ -f "${CONFIG_DIR}/config.yaml" ]] || [[ -f "${CONFIG_DIR}/config.secure" ]]; then
-        if ! "${b}" config check >/dev/null 2>&1; then
+        local check_out
+        if ! check_out=$("${b}" config check 2>&1); then
             log_error "[smoke] Installed binary rejected config:"
-            "${b}" config check 2>&1 | sed 's/^/    /' >&2 || true
+            printf '%s\n' "$check_out" | sed 's/^/    /' >&2
             return 1
         fi
         log_success "[smoke] Config check passed"
@@ -416,14 +444,21 @@ apply_mode() {
 
     if [[ "$mode" == "serve" ]]; then
         log_phase apply "Initializing serve-mode shared secret..."
-        if ! secret=$("${dddns}" config rotate-secret --init --quiet 2>&1); then
-            log_error "[apply] Failed to initialize serve-mode secret: ${secret}"
+        # stderr goes to a side file so any WARN doesn't end up concatenated
+        # onto the secret that gets printed in the UniFi UI block.
+        local secret_err
+        secret_err=$(mktemp)
+        # shellcheck disable=SC2064
+        trap "rm -f '${secret_err}'" RETURN
+        if ! secret=$("${dddns}" config rotate-secret --init --quiet 2>"${secret_err}"); then
+            log_error "[apply] Failed to initialize serve-mode secret:"
+            sed 's/^/    /' "${secret_err}" >&2 || true
             return 1
         fi
     fi
 
     log_phase apply "Generating boot script (mode=${mode})..."
-    if ! "${dddns}" config set-mode "${mode}" --boot-path "${BOOT_SCRIPT}" >/dev/null; then
+    if ! vexec "${dddns}" config set-mode "${mode}" --boot-path "${BOOT_SCRIPT}"; then
         log_error "[apply] config set-mode failed"
         return 1
     fi
@@ -431,8 +466,9 @@ apply_mode() {
     log_phase apply "Running boot script..."
     # Cosmetic failures (systemctl warnings on first run, cron restart
     # messages) are not fatal — the script IS idempotent and will re-run
-    # next boot. Only treat an exit > 1 as fatal.
-    bash "${BOOT_SCRIPT}" >/dev/null 2>&1 || log_warning "[apply] Boot script returned non-zero (often cosmetic — systemctl / cron restart warnings)"
+    # next boot. Only treat an exit > 1 as fatal. Re-run visibly under
+    # --verbose to diagnose genuine breakage.
+    vexec bash "${BOOT_SCRIPT}" || log_warning "[apply] Boot script returned non-zero (often cosmetic — systemctl / cron restart warnings; re-run with --verbose to see output)"
 
     if [[ "$mode" == "serve" ]]; then
         print_unifi_ui_values "$secret"
@@ -474,16 +510,60 @@ print_unifi_ui_values() {
 # Top-level actions
 # ---------------------------------------------------------------------------
 
+# print_environment dumps a single copy-pasteable block capturing the
+# device state the installer is about to act on. Called right after
+# detect_arch / detect_unifi_device so bug reports can be self-contained.
+print_environment() {
+    local target_version="$1"
+    local target_mode="$2"
+    local model="unknown"
+    local config_state="(none)"
+    local bootscript_state="(none)"
+    local log_state="(none)"
+    local free_data
+
+    if [[ -f /proc/ubnthal/system.info ]]; then
+        model=$(awk -F= '/^shortname=/{print $2; exit}' /proc/ubnthal/system.info)
+        [[ -z "$model" ]] && model="unknown"
+    fi
+    if [[ -f "${CONFIG_DIR}/config.secure" ]]; then
+        config_state="${CONFIG_DIR}/config.secure (encrypted)"
+    elif [[ -f "${CONFIG_DIR}/config.yaml" ]]; then
+        config_state="${CONFIG_DIR}/config.yaml"
+    fi
+    if [[ -f "${BOOT_SCRIPT}" ]]; then
+        bootscript_state="${BOOT_SCRIPT}"
+    fi
+    if [[ -f "${LOG_FILE}" ]]; then
+        log_state=$(printf '%s (%s)' "${LOG_FILE}" "$(du -h "${LOG_FILE}" 2>/dev/null | awk '{print $1}')")
+    fi
+    free_data=$(df -BM /data 2>/dev/null | awk 'NR==2 {print $4}')
+
+    echo ""
+    echo "Environment:"
+    echo "  • Device:       ${model} ($(uname -m))"
+    echo "  • Arch target:  ${ARCH}"
+    echo "  • Mode target:  ${target_mode}"
+    echo "  • Version:      ${target_version:-<latest>}"
+    echo "  • Install dir:  ${INSTALL_DIR}"
+    echo "  • Config:       ${config_state}"
+    echo "  • Bootscript:   ${bootscript_state}"
+    echo "  • Log file:     ${log_state}"
+    echo "  • Free on /data: ${free_data:-unknown}"
+    echo "  • Verbose:      $([[ "$VERBOSE" == "1" ]] && echo yes || echo no)"
+    echo ""
+}
+
 uninstall() {
     log_warning "Uninstalling dddns..."
     if [[ -f "/etc/systemd/system/dddns.service" ]]; then
-        systemctl stop dddns.service >/dev/null 2>&1 || true
-        systemctl disable dddns.service >/dev/null 2>&1 || true
+        vexec systemctl stop dddns.service || true
+        vexec systemctl disable dddns.service || true
         rm -f "/etc/systemd/system/dddns.service"
-        systemctl daemon-reload >/dev/null 2>&1 || true
+        vexec systemctl daemon-reload || true
     fi
     rm -f "${CRON_FILE}"
-    /etc/init.d/cron restart >/dev/null 2>&1 || true
+    vexec /etc/init.d/cron restart || true
     rm -f "${BOOT_SCRIPT}"
     rm -f "/usr/local/bin/${BINARY_NAME}"
     rm -rf "${INSTALL_DIR}"
@@ -524,6 +604,9 @@ Options:
                       DDDNS_VERSION env var.
   --force             Reinstall the binary even if the current version
                       matches the target release.
+  --verbose, -v       Show all subprocess output (systemctl, cron restart,
+                      boot script). Essential when a test build
+                      misbehaves. Also enabled by DDDNS_DEBUG=1.
   --uninstall         Remove dddns. Preserves configuration.
   --rollback          Restore the previous binary + boot script + cron
                       entry from the .prev snapshots written by the last
@@ -561,6 +644,7 @@ main() {
                 shift
                 ;;
             --version=*) requested_version="${1#*=}"; shift ;;
+            --verbose|-v) VERBOSE=1; shift ;;
             --help)      usage; exit 0 ;;
             *)           log_error "Unknown option: $1"; usage; exit 1 ;;
         esac
@@ -615,15 +699,9 @@ main() {
         fi
     fi
 
+    print_environment "$requested_version" "$mode"
+
     if [[ "$force" != "true" ]] && [[ "$is_upgrade" != "true" ]]; then
-        echo ""
-        log_info "Installation plan:"
-        echo "  • Binary:        ${INSTALL_DIR}/${BINARY_NAME}"
-        echo "  • Config:        ${CONFIG_DIR}/config.yaml"
-        echo "  • Boot script:   ${BOOT_SCRIPT}"
-        echo "  • Mode:          ${mode}"
-        echo "  • Log:           ${LOG_FILE}"
-        echo ""
         echo -n "Proceed? [Y/n]: "
         local response
         read -r response </dev/tty || response="y"

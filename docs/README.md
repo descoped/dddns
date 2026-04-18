@@ -33,13 +33,13 @@ dddns (Dynamic DNS) is a lightweight, efficient CLI tool that updates AWS Route5
 - 🏠 **Home networks** with dynamic IP addresses
 - 🔒 **Ubiquiti Dream Machines** (UDM, UDR, UDR7, UDM-Pro, etc.)
 - ⚡ **Resource-constrained devices** (< 20MB memory usage)
-- 🔄 **Automated updates** via cron or event-driven UniFi serve mode
+- 🔄 **Automated updates** via cron polling (recommended on UniFi Dream) or event-driven serve mode (same-host DDNS client)
 
 ## Key Features
 
 - ✅ **Simple** - Single static binary (~7.8 MB stripped ARM64)
 - ✅ **Stdlib-only** - Direct deps are `cobra` + `yaml.v3`; Route53 + SigV4 are hand-rolled, no AWS SDK
-- ✅ **Two run modes** - Cron polling or event-driven serve mode (UniFi `inadyn` push)
+- ✅ **Two run modes** - Cron polling (works everywhere, recommended on UniFi) or event-driven serve mode (for same-host DDNS clients; see [UDM Guide](udm-guide.md) for the UniFi caveat)
 - ✅ **Secure** - Encrypted credential storage with device-specific keys; 0600 config enforced at load
 - ✅ **Efficient** - Minimal memory footprint, HTTP timeouts for reliability
 - ✅ **Reliable** - IP change detection with persistent caching

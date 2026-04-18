@@ -31,7 +31,7 @@ Everything that should happen between **"v0.2.0 is tagged"** and **"community po
 ### High — hits the community on day one
 
 1. **UDM Pro / UDM SE / UDM Pro Max** — the dominant UniFi Dream devices. UDR7 is the new kid. Most issue reports will come from UDM-family users. The wanip code path differs: UDM takes the `/proc/net/route` default-route path, UDR takes the fallback. Both are covered by tests, but not by device-in-hand verification.
-2. **Serve mode end-to-end** — headline v0.2.0 feature, unit-tested, but no real inadyn push has hit the listener in this RC cycle. Gaps: does `dddns config set-mode serve` produce a systemd unit that starts? Does the UniFi UI's inadyn actually reach `127.0.0.1:53353`? Does the shared secret round-trip cleanly?
+2. **Serve mode on UniFi Dream** — validated as far as it can be: `dddns config set-mode serve` produces a working systemd unit, `dddns serve test` + `curl` from the shell succeed end-to-end including Route53 UPSERT, audit log, status file, GOMEMLIMIT ceiling. **But the UniFi UI → inadyn → dddns path doesn't work**: UniFi's `inadyn` is invoked with `-b eth4`, and the kernel's `SO_BINDTODEVICE=eth4` constraint forces `connect(127.0.0.1)` through UniFi's WAN policy table (`201.eth4`), out the wire, dropped. `ip route get 127.0.0.1 oif eth4` shows the failure mode deterministically. Documented as "experimental on UniFi Dream" in `docs/udm-guide.md`. Community ideas welcome. Serve mode on non-UniFi platforms (Pi, Linux servers, Docker) is unaffected and fully working.
 3. **Fresh install** — all RC testing was upgrade. The fresh-install branch exercises: interactive mode prompt, default `config.yaml` creation, `chmod 700/600` on fresh directories, the "proceed?" TTY prompt.
 
 ### Medium — will bite a small fraction of users
@@ -49,11 +49,10 @@ Everything that should happen between **"v0.2.0 is tagged"** and **"community po
 
 Order matters — items build on each other.
 
-1. **Serve-mode smoke** — `dddns config set-mode serve` + `dddns serve test` + manual curl with Basic Auth header to the loopback endpoint. 10 min. Gives strong confidence the headline feature isn't DOA.
-2. **Uninstall + fresh-install cycle** — on UDR7 itself: `--uninstall`, `rm -rf /data/.dddns /var/log/dddns.log`, then run the installer fresh. Confirm interactive mode prompt, default config creation, `dddns config check` reports "YOUR_ACCESS_KEY" placeholder cleanly. 15 min.
-3. **Probe upgrades** (see next section). 30 min.
-4. **Tag v0.2.0** (no code changes from rc.2 binary — only commit SHA + build date differ).
-5. **Community post.**
+1. ~~Serve-mode smoke~~ — **done**. `dddns serve test` + raw curl reach the listener cleanly; full round-trip Route53 UPSERT validated (bogus write + correction). UniFi-UI → inadyn → dddns path does NOT work; diagnosis documented, flagged as experimental on UniFi Dream. Cron mode is the UniFi path.
+2. **Uninstall + fresh-install cycle** — on UDR7 itself: `--uninstall`, `rm -rf /data/.dddns /var/log/dddns.log`, then run the installer fresh. Confirm interactive mode prompt, default config creation, `dddns config check` reports "YOUR_ACCESS_KEY" placeholder cleanly. 15 min. **Optional — not blocking v0.2.0** given the extensive upgrade/rollback/re-install testing already done.
+3. **Tag v0.2.0** (no code changes from rc.3 binary — only commit SHA + build date differ).
+4. **Community post** framing cron as the UniFi path, serve as the same-host-client path (non-UniFi).
 
 ## Probe upgrades before announcement (v0.2.1 patch or fold into v0.2.0)
 

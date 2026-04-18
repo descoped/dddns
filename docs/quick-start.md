@@ -119,30 +119,8 @@ Successfully updated home.example.com to 203.0.113.42
 
 The installer sets up the mode you selected:
 
-- **Cron mode** — `/etc/cron.d/dddns` runs `dddns update --quiet` every 30 minutes. Log file only grows when the IP actually changes or something fails.
-- **Serve mode** — `/etc/systemd/system/dddns.service` hosts a loopback listener; UniFi's `inadyn` pushes to it on every WAN IP change. See below for the 30-second setup.
-
-### Serve Mode on UniFi (30 seconds)
-
-If you ran the installer with `--mode serve` (or picked `2) serve` at the prompt), it already printed your UniFi UI values and the shared secret. If you picked cron and want to switch later:
-
-```bash
-# 1. Initialise the serve-mode config block and print the shared secret once
-dddns config rotate-secret --init
-
-# 2. Switch the boot script to serve mode and apply
-dddns config set-mode serve
-sudo /data/on_boot.d/20-dddns.sh
-
-# 3. Paste the secret into UniFi UI → Settings → Internet → Dynamic DNS:
-#      Service:  Custom
-#      Hostname: home.example.com          (must match cfg.Hostname)
-#      Username: dddns                     (handler ignores this field)
-#      Password: <the secret from step 1>
-#      Server:   127.0.0.1:53353/nic/update?hostname=%h&myip=%i
-```
-
-Verify with `dddns serve test` and `dddns serve status`. Full walkthrough in the [UDM Guide](udm-guide.md).
+- **Cron mode (recommended on UniFi)** — `/etc/cron.d/dddns` runs `dddns update --quiet` every 30 minutes. Log file only grows when the IP actually changes or something fails. This is the path we validated end-to-end on UDR7 and recommend for every UniFi Dream device.
+- **Serve mode** — `/etc/systemd/system/dddns.service` hosts a loopback listener. Works when a same-host DDNS client (ddclient, a user-authored script, a Docker sidecar) can push to `127.0.0.1:53353`. On UniFi Dream, UniFi's built-in `inadyn` currently cannot reach this listener due to its `-b eth4` binding — see the [UDM Guide](udm-guide.md#serve-mode-on-unifi--current-status-experimental) for the empirical diagnosis and the current status.
 
 ### For Linux/macOS
 

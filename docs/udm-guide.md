@@ -55,25 +55,39 @@ dddns supports two mutually-exclusive run modes on UniFi Dream devices. Pick one
 
 | Aspect              | cron                                               | serve                                                                 |
 |---------------------|----------------------------------------------------|-----------------------------------------------------------------------|
-| Trigger             | `/etc/cron.d/dddns` every 30 min                   | UniFi UI "Custom" Dynamic DNS → on-device `inadyn` → loopback HTTP    |
+| Trigger             | `/etc/cron.d/dddns` every 30 min                   | DDNS client push to loopback HTTP (see **Serve mode on UniFi** note)  |
 | Supervisor          | cron                                               | systemd (`dddns.service`, `Restart=always`)                            |
 | Listener            | none — polling only                                | `dddns serve` bound to `127.0.0.1:53353`                               |
-| Typical latency     | up to 30 min                                       | seconds after UniFi detects the WAN IP change                          |
-| Third-party calls   | `checkip.amazonaws.com` (or local iface)           | none — reads the WAN interface directly                                |
+| Typical latency     | up to 30 min                                       | seconds after the DDNS client detects a WAN IP change                  |
+| Third-party calls   | local WAN interface (no `checkip` round-trip)      | none — reads the WAN interface directly                                |
 | Shared secret       | none                                               | 64-hex-char 256-bit secret (generated, rotatable)                      |
-| Logs                | `/var/log/dddns.log` (silent on no-op)             | `journalctl -u dddns` + `/var/log/dddns-audit.log` (JSONL)             |
+| Logs                | `/var/log/dddns.log` (silent on no-op with `--quiet`) | `journalctl -u dddns` + JSONL audit log                             |
 | Status command      | `tail /var/log/dddns.log`                          | `dddns serve status` + `dddns serve test`                              |
 
 **cron mode** is the conservative choice — no inbound sockets, no secrets on the wire, nothing to authenticate. The trade-off is propagation lag: a residential ISP that rotates your IP at 03:00 won't be reflected in DNS until the next :00 or :30 tick.
 
-**serve mode** is the faster choice — UniFi's built-in `inadyn` pushes to the listener on every WAN IP change, and the handler reads the authoritative IP directly from the WAN interface before calling Route53. The trade-off is a new on-device HTTP surface; the design is layered (loopback bind, CIDR allowlist, constant-time auth, sliding-window lockout, scoped IAM policy, local IP verification) so that credential theft alone cannot hijack DNS. See [Serve Mode](#serve-mode) for setup.
+**serve mode** is event-driven — a DDNS client on the same host pushes to the listener on every WAN IP change, and the handler reads the authoritative IP directly from the WAN interface before calling Route53. The trade-off is a new on-device HTTP surface; the design is layered (loopback bind, CIDR allowlist, constant-time auth, sliding-window lockout, scoped IAM policy, local IP verification) so that credential theft alone cannot hijack DNS.
 
-**Choosing between them:**
+### Serve mode on UniFi — current status: experimental
 
-- Pick **cron** if you don't run UniFi's Dynamic DNS client, dislike managing shared secrets, or your IP is stable enough that 30-minute lag is fine.
-- Pick **serve** if you want near-instant DNS updates, already use UniFi's Dynamic DNS UI, and are comfortable with the fact that the systemd-supervised listener will be a long-running process on the router.
+**UniFi's built-in `inadyn` does not currently reach the loopback listener.** We validated this empirically on UDR7:
 
-The installer asks which one you want; pass `--mode cron` or `--mode serve` to skip the prompt. Switch any time with `dddns config set-mode` and a single boot-script execution — no reinstall required.
+- UniFi invokes `inadyn` with `-b eth4` (bind source socket to the WAN interface). This is correct for its primary use case — pushing to a public DDNS provider via the WAN.
+- With `SO_BINDTODEVICE=eth4`, the kernel consults UniFi's WAN policy-routing table (`201.eth4`) for every outbound packet. That table has a default route via the ISP gateway, so `connect(127.0.0.1:53353)` sends a SYN out the wire with destination `127.0.0.1` — which gets dropped upstream.
+- `ip route get 127.0.0.1 oif eth4` returns `via 81.191.168.1 dev eth4 table 201.eth4` — the diagnostic command that proves the failure mode.
+- `curl --interface eth4 http://127.0.0.1:53353/` from the router's shell reproduces the exact timeout inadyn sees.
+
+This is a deliberate security-zone boundary: UniFi's DDNS client lives in a "public internet only" context, dddns serve lives in a "same-host only" context, and forcing them to talk would require either binding dddns to a WAN-reachable address (posture downgrade — becomes firewall-dependent) or non-trivial kernel-level routing overrides that have to survive firmware updates.
+
+**We haven't found a way to solve this cleanly without weakening dddns's security posture.** If you have an idea, the community forum / GitHub issues are the right place — we'd happily revisit.
+
+**Until then, on UniFi Dream devices: use cron mode.** Serve mode still works perfectly for:
+
+- Raspberry Pi running as a router where `ddclient` or a custom curl script pushes to `127.0.0.1:53353`.
+- Linux servers with a user-authored systemd timer or cron-curl push.
+- Docker hosts with an inadyn sidecar sharing the network namespace.
+
+The installer defaults to cron on UniFi; `--mode serve` still works if you want to run it alongside a non-UniFi DDNS client on your UDM/UDR for some reason.
 
 ## Installation
 

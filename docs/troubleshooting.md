@@ -412,7 +412,7 @@ grep CRON /var/log/messages | tail -20
 /data/on_boot.d/20-dddns.sh
 ```
 
-If you're in serve mode, there is no cron entry — `/etc/cron.d/dddns` should be absent. Updates are triggered by the UniFi Dynamic DNS UI; see [Serve Mode Issues](#serve-mode-issues) below.
+If you're in serve mode, there is no cron entry — `/etc/cron.d/dddns` should be absent. Updates are triggered by whatever DDNS client pushes to the listener. **Note for UniFi Dream users**: the built-in `inadyn` currently cannot reach the loopback listener because of its `-b eth4` binding; see the [UDM Guide](udm-guide.md#serve-mode-on-unifi--current-status-experimental) for the diagnosis. Use cron mode on UDM/UDR for now.
 
 ### Cron Logs Are Empty (`/var/log/dddns.log` Stopped Growing)
 

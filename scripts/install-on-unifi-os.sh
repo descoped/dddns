@@ -783,6 +783,26 @@ probe_section_header() {
     printf '\n[%s]\n' "$1"
 }
 
+probe_firmware_version() {
+    # Priority: UniFi OS canonical → older firmware → motd banner fallback.
+    # Users don't self-report firmware reliably; probe-side extraction cuts
+    # an issue-triage round trip. Never emits IPs or identifiers — only the
+    # version string.
+    if [[ -r /usr/lib/version ]]; then
+        head -n1 /usr/lib/version 2>/dev/null | tr -d '\r' && return
+    fi
+    if [[ -r /etc/unifi-os/unifi-os.conf ]]; then
+        awk -F'=' '/^version/ {gsub(/[" ]/, "", $2); print $2; exit}' \
+            /etc/unifi-os/unifi-os.conf 2>/dev/null && return
+    fi
+    if [[ -r /etc/motd ]]; then
+        # Banner typically contains a version token like "UniFi OS X.Y.Z"
+        # or "UniFi Dream Router X.Y.Z". Grab the first dotted-numeric run.
+        grep -oE '[0-9]+\.[0-9]+\.[0-9]+' /etc/motd 2>/dev/null | head -n1 && return
+    fi
+    echo "(unknown)"
+}
+
 probe_section_system() {
     probe_section_header "system"
     printf '  device-model:    %s\n' "${ENV_STATE[device_model]}"
@@ -790,6 +810,7 @@ probe_section_system() {
     printf '  arch (target):   %s\n' "${ENV_STATE[arch_target]}"
     printf '  kernel:          %s\n' "${ENV_STATE[kernel]}"
     printf '  systemd:         %s\n' "${ENV_STATE[systemd_version]}"
+    printf '  firmware:        %s\n' "$(probe_firmware_version)"
     if [[ -f /etc/os-release ]]; then
         local osname
         osname=$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,"",$2); print $2; exit}' /etc/os-release || true)
@@ -978,6 +999,52 @@ probe_section_network() {
     printf '  public IPv4:     %s interface(s)\n' "$public_count"
 }
 
+# probe_check_url prints a one-line status for a single upstream endpoint.
+# Privacy-safe by design: emits the target URL (public, hard-coded in this
+# script), the HTTP status code, and a classification — never the response
+# body or any headers that could leak environment state.
+#
+# Classification:
+#   2xx/3xx        → OK         (normal reachability)
+#   403            → OK         (Route53 API returns 403 without auth —
+#                                the TCP+TLS+HTTP round-trip succeeded,
+#                                which is all we're testing)
+#   000            → fail       (curl couldn't even connect — DNS, TCP,
+#                                or TLS handshake broken, or timed out)
+#   anything else  → fail:<code>
+probe_check_url() {
+    # GET with -o /dev/null — we discard the body and read only the status
+    # code. HEAD would be cheaper but Route53's endpoint rejects HEAD with
+    # 404 regardless of path, and we need a classifier that works for all
+    # four targets uniformly. Bandwidth cost per probe run is negligible
+    # (a few KB total).
+    #
+    # Do NOT use -f — -f still writes %{http_code} on a 4xx, which then
+    # concatenates with any fallback value, producing nonsense like
+    # "404000". The case-classifier below handles semantics directly.
+    local label="$1" url="$2" code status
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null)
+    : "${code:=000}"
+    case "$code" in
+        2??|3??|403) status="OK ($code)" ;;
+        000)         status="fail (no connection / timeout)" ;;
+        *)           status="fail ($code)" ;;
+    esac
+    printf '  %-22s %s\n' "${label}:" "$status"
+}
+
+probe_section_connectivity() {
+    probe_section_header "connectivity"
+    probe_check_url "GitHub releases"       "https://github.com/${GITHUB_REPO}/releases"
+    probe_check_url "checkip.amazonaws.com" "https://checkip.amazonaws.com/"
+    # /2013-04-01/hostedzone is the Route53 ListHostedZones action path.
+    # Unsigned requests get 403 — a success signal for reachability, since
+    # TCP+TLS+HTTP all completed. A plain root path 404s and tells us
+    # nothing about whether the API is actually reachable.
+    probe_check_url "Route53 API"           "https://route53.amazonaws.com/2013-04-01/hostedzone"
+    probe_check_url "GitHub API"            "https://api.github.com/repos/${GITHUB_REPO}"
+}
+
 probe_command() {
     # Fill ENV_STATE with best-effort values (target version/mode unknown
     # in pure probe mode — we're not installing).
@@ -994,6 +1061,7 @@ probe_command() {
     probe_section_dddns_install
     probe_section_systemd
     probe_section_network
+    probe_section_connectivity
 
     echo ""
     echo "[privacy]"

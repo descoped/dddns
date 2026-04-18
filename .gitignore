@@ -39,3 +39,16 @@ coverage.out
 **/.DS_Store
 
 dist/
+
+# OpenTofu / Terraform artefacts under deploy/*/tofu/
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/tfplan
+*.auto.tfvars
+*.auto.tfvars.json
+
+# User-local deployment values — never commit these; pass via `-var` or a local .tfvars file
+deploy/**/terraform.tfvars
+deploy/**/*.local.tfvars

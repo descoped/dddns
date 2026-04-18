@@ -195,6 +195,48 @@ AWS_PROFILE=descoped tofu destroy   # picks up terraform.tfvars automatically
 This does **not** touch your Route53 records — the A record you
 pointed dddns at stays in the zone.
 
+## Cost attribution
+
+Every resource the module creates is tagged with:
+
+| Key | Value |
+|---|---|
+| `app` | `dddns` |
+| `hostname` | value of `var.hostname` |
+| `module` | `deploy/aws-lambda` |
+
+Plus anything you add via `var.tags`.
+
+**The Route53 hosted zone itself is not managed by this module** (it
+pre-dates the deployment and is user-owned — letting `tofu destroy`
+ever reach it would be a footgun). Tag it manually for complete cost
+attribution:
+
+```sh
+aws route53 change-tags-for-resource \
+  --resource-type hostedzone \
+  --resource-id <YOUR_ZONE_ID> \
+  --add-tags Key=app,Value=dddns Key=module,Value=route53-zone Key=hostname,Value=<YOUR_HOSTNAME>
+```
+
+Zone tags persist across `tofu apply` / `tofu destroy` — no drift.
+
+**Enable Cost Explorer filtering** (one-time, **management account
+only** in an AWS Organization — member accounts get
+`AccessDeniedException`):
+
+```sh
+aws ce update-cost-allocation-tags-status \
+  --cost-allocation-tags-status \
+    TagKey=app,Status=Active \
+    TagKey=hostname,Status=Active \
+    TagKey=module,Status=Active
+```
+
+Activation takes up to 24 h for historical spend to backfill.
+Once active, Cost Explorer's **Tag → app = dddns** filter rolls up
+Lambda + API Gateway + CloudWatch + SSM + Route53 hosting & queries.
+
 ## All deployment variables
 
 All defined in `tofu/variables.tf`. Required: `hosted_zone_id`,

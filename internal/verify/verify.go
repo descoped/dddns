@@ -31,6 +31,13 @@ type Report struct {
 	Resolvers    []ResolverResult
 }
 
+// route53Getter is the subset of dns.Route53Client that verify consults.
+// Keeping the abstraction local lets tests inject a fake without
+// touching internal/dns.
+type route53Getter interface {
+	GetCurrentIP(ctx context.Context) (string, error)
+}
+
 // namedResolvers is the canonical set of public DNS servers the verify
 // flow consults. Order matters only for output stability.
 var namedResolvers = []struct {
@@ -42,13 +49,31 @@ var namedResolvers = []struct {
 	{"Quad9", "9.9.9.9:53"},
 }
 
+// Test hooks. Production code leaves these at their defaults; verify_test.go
+// overrides them in setup and restores in cleanup. Package-level vars are
+// used (instead of a verifier struct) because the API is just verify.Run —
+// callers pass no verifier to swap.
+var (
+	fetchPublicIP = myip.GetPublicIP
+
+	newRoute53 = func(ctx context.Context, cfg *config.Config) (route53Getter, error) {
+		return dns.NewFromConfig(ctx, cfg)
+	}
+
+	stdLookup = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+		return net.DefaultResolver.LookupIPAddr(ctx, host)
+	}
+
+	queryNamed = queryResolver
+)
+
 // Run executes the full verify flow. It is safe to call with a cancelled
 // context — each sub-step honours ctx. A non-nil error is returned only
 // when the initial public-IP lookup fails; per-step failures (Route53,
 // stdlib, named resolvers) are folded into the Report so the caller can
 // display partial results.
 func Run(ctx context.Context, cfg *config.Config) (*Report, error) {
-	publicIP, err := myip.GetPublicIP(ctx)
+	publicIP, err := fetchPublicIP(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +81,7 @@ func Run(ctx context.Context, cfg *config.Config) (*Report, error) {
 	rep := &Report{PublicIP: publicIP}
 
 	// Route53.
-	r53, err := dns.NewFromConfig(ctx, cfg)
+	r53, err := newRoute53(ctx, cfg)
 	if err != nil {
 		rep.Route53Error = err
 	} else {
@@ -72,7 +97,7 @@ func Run(ctx context.Context, cfg *config.Config) (*Report, error) {
 
 	// Stdlib lookup.
 	stdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	ips, lookupErr := net.DefaultResolver.LookupIPAddr(stdCtx, cfg.Hostname)
+	ips, lookupErr := stdLookup(stdCtx, cfg.Hostname)
 	cancel()
 	if lookupErr != nil {
 		rep.StdlibError = lookupErr
@@ -89,7 +114,7 @@ func Run(ctx context.Context, cfg *config.Config) (*Report, error) {
 	rep.Resolvers = make([]ResolverResult, 0, len(namedResolvers))
 	for _, nr := range namedResolvers {
 		res := ResolverResult{Name: nr.Name, Server: nr.Address}
-		ip, err := queryResolver(ctx, cfg.Hostname, nr.Address)
+		ip, err := queryNamed(ctx, cfg.Hostname, nr.Address)
 		if err != nil {
 			res.Error = err
 		} else {

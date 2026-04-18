@@ -20,12 +20,14 @@ Complete guide for running dddns on Ubiquiti Dream Machine devices.
 
 | Model | CPU | Architecture | UniFi OS | Status |
 |-------|-----|--------------|----------|---------|
-| **UDM** | ARM Cortex-A57 | ARM64 | 2.x-3.x | ✅ Fully Supported |
-| **UDM-Pro** | ARM Cortex-A57 | ARM64 | 2.x-3.x | ✅ Fully Supported |
-| **UDM-SE** | ARM Cortex-A57 | ARM64 | 2.x-3.x | ✅ Fully Supported |
-| **UDM Pro Max** | Enhanced ARM | ARM64 | 3.x | ✅ Fully Supported |
-| **UDR** | Dual-core ARM | ARM64 | 2.x-3.x | ✅ Fully Supported |
-| **UDR7** | Cortex-A53 | ARM64 | 3.x | ✅ Fully Supported |
+| **UDM** | ARM Cortex-A57 | ARM64 | 2.x-3.x | Supported |
+| **UDM-Pro** | ARM Cortex-A57 | ARM64 | 2.x-3.x | Supported |
+| **UDM-SE** | ARM Cortex-A57 | ARM64 | 2.x-3.x | Supported |
+| **UDM Pro Max** | Enhanced ARM | ARM64 | 3.x | Supported |
+| **UDR** | Dual-core ARM | ARM64 | 2.x-3.x | Supported |
+| **UDR7** | Cortex-A53 | ARM64 | 4.x | Supported — end-to-end validated (reference device for v0.2.0) |
+
+UDR7 is the reference device for v0.2.0. Its policy-based routing (no default route in the main table) drove the `wanip` fallback — see [Policy-Based Routing on UDR7](#policy-based-routing-on-udr7) below.
 
 ## Prerequisites
 
@@ -51,16 +53,27 @@ Before installing dddns on your UDM:
 
 dddns supports two mutually-exclusive run modes on UniFi Dream devices. Pick one at install time; switch later with `dddns config set-mode`.
 
-| Mode  | Trigger              | Boot artefact                   | Log file                     | Typical latency |
-|-------|----------------------|---------------------------------|------------------------------|-----------------|
-| cron  | `/etc/cron.d/dddns` every 30 min | `/data/on_boot.d/20-dddns.sh` (installs cron) | `/var/log/dddns.log` | up to 30 min |
-| serve | UniFi UI "Custom" Dynamic DNS → `inadyn` → local HTTP | `/data/on_boot.d/20-dddns.sh` (starts supervised `dddns serve` loop) | `/var/log/dddns-server.log` + `/var/log/dddns-audit.log` | seconds |
+| Aspect              | cron                                               | serve                                                                 |
+|---------------------|----------------------------------------------------|-----------------------------------------------------------------------|
+| Trigger             | `/etc/cron.d/dddns` every 30 min                   | UniFi UI "Custom" Dynamic DNS → on-device `inadyn` → loopback HTTP    |
+| Supervisor          | cron                                               | systemd (`dddns.service`, `Restart=always`)                            |
+| Listener            | none — polling only                                | `dddns serve` bound to `127.0.0.1:53353`                               |
+| Typical latency     | up to 30 min                                       | seconds after UniFi detects the WAN IP change                          |
+| Third-party calls   | `checkip.amazonaws.com` (or local iface)           | none — reads the WAN interface directly                                |
+| Shared secret       | none                                               | 64-hex-char 256-bit secret (generated, rotatable)                      |
+| Logs                | `/var/log/dddns.log` (silent on no-op)             | `journalctl -u dddns` + `/var/log/dddns-audit.log` (JSONL)             |
+| Status command      | `tail /var/log/dddns.log`                          | `dddns serve status` + `dddns serve test`                              |
 
-**cron mode** is the safe default — polls your public IP, compares against the cached value, UPSERTs Route53 if changed. No inbound sockets, no secrets on the wire.
+**cron mode** is the conservative choice — no inbound sockets, no secrets on the wire, nothing to authenticate. The trade-off is propagation lag: a residential ISP that rotates your IP at 03:00 won't be reflected in DNS until the next :00 or :30 tick.
 
-**serve mode** replaces the cron entry with a long-running `dddns serve` listener bound to `127.0.0.1:53353`. UniFi's built-in `inadyn` (configured via the Network Controller's Dynamic DNS dialog) calls the listener on every WAN IP change, and the handler reads the authoritative IP directly from the WAN interface before calling Route53. Faster, but introduces a new on-device HTTP surface that must be kept loopback-only. See the [Serve Mode](#serve-mode) section below for full setup.
+**serve mode** is the faster choice — UniFi's built-in `inadyn` pushes to the listener on every WAN IP change, and the handler reads the authoritative IP directly from the WAN interface before calling Route53. The trade-off is a new on-device HTTP surface; the design is layered (loopback bind, CIDR allowlist, constant-time auth, sliding-window lockout, scoped IAM policy, local IP verification) so that credential theft alone cannot hijack DNS. See [Serve Mode](#serve-mode) for setup.
 
-The installer asks which one you want; pass `--mode cron` or `--mode serve` to skip the prompt.
+**Choosing between them:**
+
+- Pick **cron** if you don't run UniFi's Dynamic DNS client, dislike managing shared secrets, or your IP is stable enough that 30-minute lag is fine.
+- Pick **serve** if you want near-instant DNS updates, already use UniFi's Dynamic DNS UI, and are comfortable with the fact that the systemd-supervised listener will be a long-running process on the router.
+
+The installer asks which one you want; pass `--mode cron` or `--mode serve` to skip the prompt. Switch any time with `dddns config set-mode` and a single boot-script execution — no reinstall required.
 
 ## Installation
 
@@ -68,66 +81,80 @@ The installer asks which one you want; pass `--mode cron` or `--mode serve` to s
 
 ```bash
 # One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 ```
+
+The installer runs three safety gates (pre-flight, state snapshot, post-install smoke) and rolls back automatically on any failure. See [Safety Gates](#safety-gates) below.
 
 ### Step-by-Step Installation
 
-1. **Connect to your UDM**
+1. **Connect to your UniFi device**
    ```bash
-   ssh root@192.168.1.1  # Replace with your UDM IP
+   ssh root@192.168.1.1  # Replace with your device's IP
    ```
 
-2. **Check environment**
+2. **Check environment (or use the installer's `--probe`)**
    ```bash
-   # Check your device
    uname -a
-   
-   # Check available space
    df -h /data
-   
-   # Check existing boot scripts
    ls -la /data/on_boot.d/
+
+   # Alternatively, the installer's privacy-safe probe prints all of the above
+   # plus cron / systemd / binary / rollback readiness in one pass, with no
+   # IPs or config contents. Safe to paste in a GitHub issue.
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --probe
    ```
 
 3. **Run installer**
    ```bash
-   # Download installer
-   curl -O https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh
-   chmod +x install-on-unifi-os.sh
+   # Interactive (prompts for run mode)
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 
-   # Interactive (prompts for mode)
-   ./install-on-unifi-os.sh
+   # Non-interactive mode selection
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --mode cron
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --mode serve
 
-   # Non-interactive
-   ./install-on-unifi-os.sh --mode cron    # polling every 30 min
-   ./install-on-unifi-os.sh --mode serve   # event-driven via UniFi UI
+   # Install a specific release (required for pre-releases like v0.2.0-rc.1)
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --version v0.2.0
+
+   # Verbose — show all subprocess output (systemctl, cron restart, boot script)
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --verbose
    ```
 
    The installer verifies the binary's SHA-256 against the release's
-   `checksums.txt` before extracting — a tampered or corrupt download
-   aborts the install rather than running.
+   `checksums.txt` before extracting — a tampered or corrupt download aborts
+   the install rather than running.
 
 4. **Configure AWS credentials**
+
+   dddns reads credentials only from its config file — not from `~/.aws/credentials`, not from environment variables. Edit the generated template:
+
    ```bash
-   # Option 1: Use AWS CLI profile
-   aws configure --profile route66dns
-   
-   # Option 2: Edit config directly
    vi /data/.dddns/config.yaml
    ```
 
+   Set `aws_access_key`, `aws_secret_key`, `hosted_zone_id`, and `hostname`. The file must stay `chmod 600`.
+
 5. **Test installation**
    ```bash
-   # Check version
    dddns --version
-   
-   # Test IP resolution
-   dddns ip
-   
-   # Test update (dry run)
-   dddns update --dry-run
+   dddns config check          # validates YAML + permissions + required fields
+   dddns ip                    # public IP lookup (remote or local per ip_source)
+   dddns update --dry-run      # exercise the update path without writing to Route53
    ```
+
+### Safety Gates
+
+Every install and upgrade runs through three gates; any failure leaves the previous version in place.
+
+1. **Pre-flight** — runs the downloaded binary's `--version` and `config check` against the existing config **before** replacing anything on disk. The running install is untouched if the new binary rejects the current config.
+2. **State snapshot** — the prior binary, boot script, cron entry, and systemd unit are copied to `*.prev` siblings. `--rollback` restores them:
+   ```bash
+   bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --rollback
+   ```
+3. **Post-install smoke** — after the boot script has applied the mode, the live binary re-runs `--version` and `config check`. On failure the installer auto-rolls back and exits non-zero.
+
+This makes the installer safe to run unattended from cron / ansible — a broken release cannot cause downtime.
 
 ## Serve Mode
 
@@ -312,10 +339,32 @@ For UDM with multiple WAN connections:
 # Check which interface is primary
 ip route show default
 
-# Force specific interface (if needed)
-# Edit /data/on_boot.d/20-dddns.sh to add:
-export BIND_INTERFACE=eth8  # Your WAN interface
+# Pin an interface — set this in config.yaml (NOT by editing the boot script,
+# which is regenerated on every set-mode / install).
+server:
+  wan_interface: "eth4"   # or pppoe-wan0, ppp0, ...
 ```
+
+### Policy-Based Routing on UDR7
+
+UDR7 runs with policy-based routing by default — the default egress route does **not** live in the main routing table. Earlier dddns releases assumed the main table was authoritative and failed to detect the WAN IP on UDR7.
+
+v0.2.0 ships a rule-based fallback in `internal/wanip`:
+
+1. Read `/proc/net/route` for a default entry in the main table. Use that interface if found.
+2. Otherwise, enumerate up, non-loopback interfaces and pick the first with a publicly-routable IPv4. RFC1918, CGNAT (`100.64.0.0/10`), link-local, and IPv6 are rejected.
+
+No interface name is hard-coded, so the fix holds across UDR7 setups. UDM / UDM-Pro / UDM-SE still find their default route in the main table and take the first path — no behaviour change.
+
+Confirm via `--probe`:
+
+```
+[network (metadata only)]
+  default route:   (none — main table has no default)    # fallback engages
+  public IPv4:     1 interface(s)                        # the scan found it
+```
+
+If the fallback picks the wrong interface (e.g. LTE failover when you want wired WAN), pin it explicitly in `server.wan_interface`.
 
 ## Monitoring
 
@@ -539,12 +588,15 @@ dddns config init
 
 #### AWS credentials not working
 
+dddns reads credentials only from `/data/.dddns/config.yaml` (or `config.secure`). To test the same access key pair out-of-band with the AWS CLI:
+
 ```bash
-# Check AWS profile
-export AWS_CONFIG_FILE=/root/.aws/config
-export AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials
-aws route53 list-hosted-zones --profile route66dns
+AWS_ACCESS_KEY_ID=$(grep aws_access_key /data/.dddns/config.yaml | awk -F'"' '{print $2}') \
+AWS_SECRET_ACCESS_KEY=$(grep aws_secret_key /data/.dddns/config.yaml | awk -F'"' '{print $2}') \
+aws route53 list-hosted-zones
 ```
+
+If `dddns config check` passes but `dddns update` hits `AccessDenied`, see [AWS Setup Guide → AccessDenied](aws-setup.md#accessdenied-error) — the scoped IAM policy requires the record name and action to match exactly.
 
 #### No updates happening
 

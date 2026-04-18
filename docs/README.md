@@ -2,7 +2,16 @@
 
 Welcome to the dddns documentation! This guide will help you install, configure, and use dddns to automatically update your AWS Route53 DNS records with your dynamic IP address.
 
-## 📚 Documentation Structure
+## What's New in v0.2.0
+
+- **Serve mode (UniFi)** — event-driven updates via UniFi's built-in `inadyn` push, triggered the instant your WAN IP changes. Alternative to cron polling. See the [UDM Guide](udm-guide.md) and [Quick Start](quick-start.md).
+- **Stdlib-only binary** — AWS SDK retired in favour of a hand-rolled Route53 REST client and SigV4 signer. Stripped ARM64 binary is ~7.8 MB (down from 16 MB); only direct dependencies are `cobra` and `yaml.v3`.
+- **Hardened UniFi installer** — three safety gates (pre-flight, state snapshot, post-install smoke) plus `--probe`, `--version`, `--verbose`, `--rollback`, and `--uninstall`. See [Installation Guide](installation.md).
+- **New commands** — `dddns serve` / `serve status` / `serve test`, `dddns config set-mode {cron|serve}`, `dddns config rotate-secret`. See [Command Reference](commands.md).
+- **Stricter config permissions** — `config.yaml` is now refused at load time unless it's `chmod 600`. See [Configuration Guide](configuration.md).
+- **WAN IP auto-detect fallback** — on devices with policy-based routing (e.g. UDR7), dddns now scans up interfaces when the main routing table has no default. See [Troubleshooting](troubleshooting.md).
+
+## Documentation Structure
 
 ### Getting Started
 - [**Quick Start**](quick-start.md) - Get up and running in 5 minutes
@@ -22,42 +31,51 @@ Welcome to the dddns documentation! This guide will help you install, configure,
 dddns (Dynamic DNS) is a lightweight, efficient CLI tool that updates AWS Route53 DNS A records with your current public IP address. It's designed specifically for:
 
 - 🏠 **Home networks** with dynamic IP addresses
-- 🔒 **Ubiquiti Dream Machines** (UDM, UDR, UDM-Pro, etc.)
+- 🔒 **Ubiquiti Dream Machines** (UDM, UDR, UDR7, UDM-Pro, etc.)
 - ⚡ **Resource-constrained devices** (< 20MB memory usage)
-- 🔄 **Automated updates** via cron
+- 🔄 **Automated updates** via cron or event-driven UniFi serve mode
 
 ## Key Features
 
-- ✅ **Simple** - Single binary, no dependencies
-- ✅ **Secure** - Encrypted credential storage with device-specific keys
+- ✅ **Simple** - Single static binary (~7.8 MB stripped ARM64)
+- ✅ **Stdlib-only** - Direct deps are `cobra` + `yaml.v3`; Route53 + SigV4 are hand-rolled, no AWS SDK
+- ✅ **Two run modes** - Cron polling or event-driven serve mode (UniFi `inadyn` push)
+- ✅ **Secure** - Encrypted credential storage with device-specific keys; 0600 config enforced at load
 - ✅ **Efficient** - Minimal memory footprint, HTTP timeouts for reliability
 - ✅ **Reliable** - IP change detection with persistent caching
 - ✅ **Safe** - Proxy/VPN detection to prevent incorrect updates
 - ✅ **Cron-friendly** - Quiet mode for unattended operation
-- ✅ **Persistent** - Survives reboots and firmware updates on UDM
+- ✅ **Persistent** - Survives reboots and firmware updates on UniFi OS
 
 ## Available Commands
 
 ```bash
 # Configuration management
-dddns config init         # Interactive configuration setup
-dddns config check        # Validate configuration
+dddns config init                 # Interactive configuration setup
+dddns config check                # Validate configuration
+dddns config set-mode cron|serve  # Switch UniFi run mode (rewrites boot script)
+dddns config rotate-secret        # Rotate the serve-mode shared secret
 
 # IP operations
-dddns ip                  # Show current public IP address
+dddns ip                          # Show current public IP address
 
 # DNS updates
-dddns update              # Update DNS record if IP changed
-dddns update --dry-run    # Preview what would be updated
-dddns update --force      # Force update even if IP unchanged
-dddns update --quiet      # Suppress non-error output (for cron)
+dddns update                      # Update DNS record if IP changed
+dddns update --dry-run            # Preview what would be updated
+dddns update --force              # Force update even if IP unchanged
+dddns update --quiet              # Suppress non-error output (for cron)
 
 # Verification
-dddns verify              # Check if DNS matches current IP
+dddns verify                      # Check if DNS matches current IP
+
+# Serve mode (UniFi event-driven bridge)
+dddns serve                       # Start the listener (blocks; supervised by systemd)
+dddns serve status                # Show the last request the listener handled
+dddns serve test                  # Send a local Basic-Auth'd test request
 
 # Security
-dddns secure enable       # Convert to encrypted config
-dddns secure test         # Test device encryption
+dddns secure enable               # Convert to encrypted config
+dddns secure test                 # Test device encryption
 ```
 
 ## Quick Example

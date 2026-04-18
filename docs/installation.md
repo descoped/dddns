@@ -32,38 +32,68 @@ This guide covers installation methods for all supported platforms.
 
 ```bash
 # Download and run installer
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 ```
 
 The installer will:
-- ✅ Check environment compatibility
-- ✅ Install on-boot-script (if needed)
-- ✅ Download the ARM64 binary
-- ✅ Set up persistent boot scripts
-- ✅ Configure cron for automatic updates
-- ✅ Create default configuration
+- Check environment compatibility (device, arch, /data persistence, systemd, disk space)
+- Install `unifios-utilities` on-boot-script hook if absent
+- Download the ARM64 binary and verify its SHA-256 against `checksums.txt`
+- Prompt for run mode (cron or serve) unless `--mode` is passed
+- Generate `/data/on_boot.d/20-dddns.sh` via `dddns config set-mode`
+- Install `/etc/cron.d/dddns` (cron mode) or `/etc/systemd/system/dddns.service` (serve mode)
+- Create a default `/data/.dddns/config.yaml` with 0600 permissions if none exists
 
-### Installation Options
+### Installer Flags
 
 ```bash
-# Check environment only (no installation)
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
-  bash -s -- --check-only
+# Install a specific release (required for pre-releases — GitHub's "latest" excludes RCs)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --version v0.2.0
 
-# Install specific version
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
-  bash -s -- --version v1.0.0
+# Pick a mode non-interactively
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --mode serve
 
-# Force reinstall/upgrade
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
-  bash -s -- --force
+# Verbose — show all subprocess output (systemctl, cron restart, boot script)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --verbose
 
-# Uninstall
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | \
-  bash -s -- --uninstall
+# Privacy-safe self-diagnosis — prints device, arch, disk, cron, systemd,
+# and install metadata with no WAN IPs, no config values, no log contents.
+# Safe to paste in a GitHub issue. Changes no state.
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --probe
+
+# Roll back to the previous binary + boot script + cron/systemd entry
+# from the .prev snapshots written by the last install
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --rollback
+
+# Uninstall (preserves /data/.dddns so reinstalling keeps your config)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --uninstall
 ```
 
+`DDDNS_DEBUG=1` has the same effect as `--verbose`. `DDDNS_VERSION` is equivalent to `--version`.
+
+### Safety Gates
+
+Every install and upgrade runs through three gates. Any failure reverts or refuses the install with the previous version left intact.
+
+1. **Pre-flight.** Downloads the new binary to a temp dir, runs `--version` and `config check` against the **existing** config *before* touching any live file. If the new binary rejects the current config, the running install is untouched.
+2. **State snapshot.** The prior binary, boot script, cron entry, and systemd unit are copied to `*.prev` siblings. `--rollback` restores them in one shot.
+3. **Post-install smoke.** After the boot script has applied the mode, the now-live binary re-runs `--version` and `config check`. If either fails, the installer auto-rolls back to the `.prev` state and exits non-zero.
+
+Combined, the gates make upgrades safe to run from cron/ansible without manual approval — a broken release cannot cause downtime.
+
+### Release Verification
+
+The installer downloads `checksums.txt` from the GitHub release alongside the tarball and verifies the binary's SHA-256 before extracting. A mismatch aborts the install with `SHA-256 mismatch` or `Could not fetch checksums.txt` — treat these as hard failures, not noise.
+
 ### Manual Installation
+
+The automated installer handles boot-script generation, SHA-256 verification, and mode switching. Manual installs skip those safety nets — prefer `install-on-unifi-os.sh`. If you still want to do it by hand:
 
 ```bash
 # 1. Create directories
@@ -79,22 +109,15 @@ chmod +x /data/dddns/dddns
 # 3. Create symlink
 ln -sf /data/dddns/dddns /usr/local/bin/dddns
 
-# 4. Create boot script
-cat > /data/on_boot.d/20-dddns.sh << 'EOF'
-#!/bin/bash
-ln -sf /data/dddns/dddns /usr/local/bin/dddns
-cat > /etc/cron.d/dddns << 'CRON'
-*/30 * * * * root /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
-CRON
-/etc/init.d/cron restart
-EOF
-chmod +x /data/on_boot.d/20-dddns.sh
-
-# 5. Run boot script
-/data/on_boot.d/20-dddns.sh
-
-# 6. Initialize configuration
+# 4. Initialize configuration (creates /data/.dddns/config.yaml with 0600 perms)
 dddns config init
+
+# 5. Generate the boot script via the binary itself (don't hand-write it —
+#    set-mode emits the canonical, idempotent version with mode-switching logic).
+dddns config set-mode cron    # or: dddns config set-mode serve
+
+# 6. Apply immediately (set-mode only writes the file; it doesn't run it)
+sudo /data/on_boot.d/20-dddns.sh
 ```
 
 ## Linux
@@ -395,8 +418,16 @@ dddns update --dry-run
 
 ### UDM
 ```bash
-# Re-run installer with --force
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --force
+# Re-run installer — safe to re-run; preserves the current mode unless
+# --mode is passed explicitly. Use --force only to reinstall the same
+# version in place.
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
+
+# Upgrade to a specific release (required for RC testing)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --version v0.2.0
+
+# If an upgrade goes wrong, roll back to the previous snapshot
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --rollback
 ```
 
 ### Linux
@@ -427,8 +458,9 @@ sudo chmod +x /usr/local/bin/dddns
 
 ### UDM
 ```bash
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash -s -- --uninstall
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --uninstall
 ```
+Configuration at `/data/.dddns/` is preserved. Remove it manually with `rm -rf /data/.dddns` if you want a full wipe.
 
 ### Linux
 ```bash

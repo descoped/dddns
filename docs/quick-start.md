@@ -13,12 +13,14 @@ Before you begin, you'll need:
 
 ## Step 1: Install dddns
 
-### For Ubiquiti Dream Machines (UDM/UDR)
+### For Ubiquiti Dream Machines (UDM / UDR / UDR7)
 
 ```bash
-# One-line installation
-curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
+# One-line installation — the installer prompts for run mode (cron or serve)
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh)
 ```
+
+The installer runs three safety gates (pre-flight, state snapshot, post-install smoke) and rolls back automatically on any failure. See the [Installation Guide](installation.md) for all flags.
 
 ### For Linux/macOS
 
@@ -34,20 +36,11 @@ chmod +x /usr/local/bin/dddns
 mkdir -p ~/.dddns
 ```
 
-## Step 2: Configure AWS Credentials
+## Step 2: Gather AWS Credentials
 
-```bash
-# Configure AWS CLI profile
-aws configure --profile dddns
+You'll need a Route53 access key pair scoped to a single hosted zone. Follow the [AWS Setup Guide](aws-setup.md) for the IAM policy; keep the access key ID and secret access key on hand for Step 3.
 
-# Enter when prompted:
-AWS Access Key ID: YOUR_ACCESS_KEY
-AWS Secret Access Key: YOUR_SECRET_KEY
-Default region name: us-east-1
-Default output format: json
-```
-
-This creates a secure credentials file at `~/.aws/credentials` with restricted permissions.
+dddns does **not** read AWS environment variables or shared credential profiles — all credentials live in the dddns config file and are encryptable at rest with `dddns secure enable`.
 
 ## Step 3: Create Configuration
 
@@ -62,29 +55,29 @@ vi ~/.dddns/config.yaml  # or /data/.dddns/config.yaml on UDM
 Update the configuration with your settings:
 
 ```yaml
-# AWS Settings (REQUIRED - single source of truth)
-aws_profile: "dddns"     # References ~/.aws/credentials profile
+# AWS Settings (REQUIRED - no environment variables for security)
 aws_region: "us-east-1"
+aws_access_key: "AKIAIOSFODNN7EXAMPLE"
+aws_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 
 # DNS Settings (required)
 hosted_zone_id: "Z1234567890ABC"    # Your Route53 Hosted Zone ID
 hostname: "home.example.com"        # Domain to update
 ttl: 300
-
-# Operational Settings
-ip_cache_file: "/tmp/dddns-last-ip.txt"
 ```
 
-**Important**: The config file must have restricted permissions (600):
+**Important**: The config file must have `0600` permissions. dddns refuses to load it otherwise:
+
 ```bash
-chmod 600 ~/.dddns/config.yaml
+chmod 600 ~/.dddns/config.yaml         # Linux / macOS
+chmod 600 /data/.dddns/config.yaml     # UDM / UDR
 ```
 
 ### Finding Your Hosted Zone ID
 
 ```bash
-# List all hosted zones
-aws route53 list-hosted-zones --profile dddns
+# List all hosted zones (uses your default AWS CLI credentials, separate from dddns)
+aws route53 list-hosted-zones
 
 # Or in AWS Console:
 # Route53 → Hosted zones → Select your domain → Copy Hosted zone ID
@@ -124,7 +117,32 @@ Successfully updated home.example.com to 203.0.113.42
 
 ### For UDM (Already Done)
 
-The installer automatically sets up a cron job to run every 30 minutes.
+The installer sets up the mode you selected:
+
+- **Cron mode** — `/etc/cron.d/dddns` runs `dddns update --quiet` every 30 minutes. Log file only grows when the IP actually changes or something fails.
+- **Serve mode** — `/etc/systemd/system/dddns.service` hosts a loopback listener; UniFi's `inadyn` pushes to it on every WAN IP change. See below for the 30-second setup.
+
+### Serve Mode on UniFi (30 seconds)
+
+If you ran the installer with `--mode serve` (or picked `2) serve` at the prompt), it already printed your UniFi UI values and the shared secret. If you picked cron and want to switch later:
+
+```bash
+# 1. Initialise the serve-mode config block and print the shared secret once
+dddns config rotate-secret --init
+
+# 2. Switch the boot script to serve mode and apply
+dddns config set-mode serve
+sudo /data/on_boot.d/20-dddns.sh
+
+# 3. Paste the secret into UniFi UI → Settings → Internet → Dynamic DNS:
+#      Service:  Custom
+#      Hostname: home.example.com          (must match cfg.Hostname)
+#      Username: dddns                     (handler ignores this field)
+#      Password: <the secret from step 1>
+#      Server:   127.0.0.1:53353/nic/update?hostname=%h&myip=%i
+```
+
+Verify with `dddns serve test` and `dddns serve status`. Full walkthrough in the [UDM Guide](udm-guide.md).
 
 ### For Linux/macOS
 
@@ -133,7 +151,7 @@ The installer automatically sets up a cron job to run every 30 minutes.
 crontab -e
 
 # Add this line:
-*/30 * * * * /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
+*/30 * * * * /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
 ```
 
 ## Verify It's Working
@@ -181,8 +199,9 @@ dddns --version
 
 If you run into issues:
 
-1. Check the logs: `tail -f /var/log/dddns.log`
+1. Check the logs: `tail -f /var/log/dddns.log` (cron) or `journalctl -u dddns -f` (serve)
 2. Run with dry-run: `dddns update --dry-run`
-3. Verify AWS credentials: `aws route53 list-hosted-zones --profile dddns`
-4. See [Troubleshooting Guide](troubleshooting.md)
-5. For AWS setup help, see [AWS Setup Guide](aws-setup.md)
+3. Validate config: `dddns config check`
+4. On UniFi, run the privacy-safe probe: `bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --probe`
+5. See [Troubleshooting Guide](troubleshooting.md)
+6. For AWS setup help, see [AWS Setup Guide](aws-setup.md)

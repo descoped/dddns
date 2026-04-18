@@ -133,10 +133,11 @@ From `20260417T2033Z_cli-for-idiots.md`:
 - Shell installer shrinks to ~40 lines (the heavy lifting moves into the binary).
 - Platform-auto detection for non-UniFi targets (Raspberry Pi, generic Linux, macOS, Docker).
 
-From `20260417T2002Z_release-prep.md` items 2–8:
+Residual items (originally from the retired `20260417T2002Z_release-prep.md`):
 - CI workflow polish (lint-gate, concurrency block, `-trimpath`).
 - Cron-mode log routing through journald instead of flat files (`\| logger -t dddns`).
-- Memory-leak audit for the serve-mode listener under sustained load.
+- Memory-leak audit for the serve-mode listener under sustained load. Target: RSS stays <20 MB after 24 h of simulated `inadyn` push traffic. Tools: `go test -run TestServer_Integration -race -count=1000` + `pprof -alloc_space` against a sustained-load harness.
+- Docs refresh — **done 2026-04-18** alongside this plan.
 
 ### Multi-provider rollout order
 

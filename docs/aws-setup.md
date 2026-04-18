@@ -156,23 +156,32 @@ It works but loses the blast-radius guarantees above — if the credentials leak
 
 > **⚠️ Warning**: This is the ONLY time you can see the Secret Access Key. Save it securely!
 
-### Step 5: Configure AWS CLI Profile
+### Step 5: Put the credentials into dddns config
 
-On your device where dddns will run:
+dddns reads AWS credentials **directly from its own config file** — not from `~/.aws/credentials`, environment variables, or named AWS CLI profiles. Run the interactive wizard or edit the config directly:
 
 ```bash
-aws configure --profile dddns
+dddns config init    # interactive
 ```
 
-Enter when prompted:
-```
-AWS Access Key ID: AKIAXXXXXXXXXXXXXX
-AWS Secret Access Key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-Default region name: us-east-1
-Default output format: json
+Or edit `~/.dddns/config.yaml` (UDM / UDR: `/data/.dddns/config.yaml`):
+
+```yaml
+aws_region: "us-east-1"
+aws_access_key: "AKIAXXXXXXXXXXXXXX"
+aws_secret_key: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+hosted_zone_id: "Z1234567890ABC"
+hostname: "home.example.com"
+ttl: 300
 ```
 
-This creates `~/.aws/credentials` with your secure credentials.
+Fix permissions if needed — dddns refuses to load `config.yaml` at anything looser than `0600`:
+
+```bash
+chmod 600 ~/.dddns/config.yaml
+```
+
+For encrypted-at-rest storage (device-specific AES-256-GCM key), run `dddns secure enable` after populating the plaintext config.
 
 ## Cost Information
 

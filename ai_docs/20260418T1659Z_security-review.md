@@ -106,6 +106,21 @@ The agents explicitly noted these as suspicious-looking-but-fine. Listing for ef
 
 ---
 
+## Which fixes actually protect UDR7?
+
+On UDR7 the profile auto-detect picks `ip_source: local` (see `updater.go` `resolveIP`). That path reads the WAN IP from the kernel via `wanip.FromInterface` and never touches `checkip.amazonaws.com`. Serve mode also uses `wanip.FromInterface` directly — `myip.GetPublicIP` is not on any hot path in a UDR7 install. Breakdown by code path:
+
+| Fix | UDR7 cron | UDR7 serve | `dddns ip` / `verify` | Non-UDM `ip_source: remote` | Rationale |
+|---|---|---|---|---|---|
+| F1 (myip 200 check + 64-byte cap) | — | — | ✓ | ✓ | Defends manual commands + remote-mode on Pi/Linux |
+| F2 (route53 1 MiB cap) | ✓ | ✓ | ✓ | ✓ | Every UPSERT flows through `route53.do()` |
+| F3 (config.yaml 0600 enforcement at Load) | ✓ | ✓ | ✓ | ✓ | Startup gate |
+| F4 (EqualFold hostname) | — | ✓ | — | — | Serve-mode only — cron uses own hostname |
+| F5 (audit/status stderr on write failure) | — | ✓ | — | — | Serve-mode observability |
+| F6 (exec 5s timeout) | — | — | — | — | macOS/Windows dev path only |
+
+**UDR7-relevant hardening is F2 + F3 + F4 + F5.** F1 and F6 are still correct fixes — they protect the `dddns ip` / `dddns verify` commands (which users run manually) and the non-UDM platforms we support secondarily — but they aren't why UDR7 got safer in this cycle.
+
 ## Final verdict — is this safe for UDR7?
 
 **Yes.** The layered threat model in `ai_docs/5_unifi-ddns-bridge.md` §3 is correctly implemented:

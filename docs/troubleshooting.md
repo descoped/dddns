@@ -38,6 +38,46 @@ journalctl -u dddns -n 50       # recent daemon lifecycle events
 
 ## Installation Issues
 
+### Using `--probe` for Self-Diagnosis (UniFi)
+
+Before digging into individual symptoms on a UniFi device, run the installer's privacy-safe probe. It changes no state and prints a structured snapshot of device, arch, disk, scheduler, install layout, systemd units, and network metadata. It is **safe to paste into a GitHub issue** — WAN IPs are counted, never printed; config values, log contents, and user-authored script bodies are excluded by design.
+
+```bash
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) --probe
+```
+
+Sample output:
+
+```
+=== dddns probe ===
+generated: 2026-04-18T10:00:00Z
+
+[system]
+  device-model:    UDR7
+  arch (host):     aarch64
+  kernel:          5.4.213
+  systemd:         249
+
+[scheduler]
+  cron service:    running
+  cron entry:      present (142 bytes)
+  cron schedule:   */30 * * * *
+  on_boot.d:       1 script(s)
+    - 20-dddns.sh (2341 bytes, 2026-04-18)
+
+[dddns install]
+  symlink:         /usr/local/bin/dddns → /data/dddns/dddns
+  binary:          /data/dddns/dddns (7823912 bytes)
+  version:         dddns version 0.2.0 ...
+  rollback ready:  yes (dddns version 0.1.1 ...; snapshotted 2026-04-18)
+
+[network (metadata only)]
+  default route:   (none — main table has no default)
+  public IPv4:     1 interface(s)
+```
+
+The `default route` line is particularly useful on UDR7 — a `(none — main table has no default)` there explains why `ip_source: local` falls through to the interface-scanning fallback (see [WAN IP Wrong or Not Detected](#wan-ip-wrong-or-not-detected-udr7)).
+
 ### Command Not Found
 
 **Symptom**: `bash: dddns: command not found`
@@ -131,52 +171,71 @@ yamllint ~/.dddns/config.yaml
 
 # Example valid config
 cat > ~/.dddns/config.yaml << EOF
-aws_profile: "default"
 aws_region: "us-east-1"
+aws_access_key: "AKIAIOSFODNN7EXAMPLE"
+aws_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 hosted_zone_id: "Z1234567890ABC"
 hostname: "home.example.com"
 ttl: 300
 EOF
+chmod 600 ~/.dddns/config.yaml
 ```
 
 ### Config Permission Issues
 
-**Symptom**: `Error: config file has incorrect permissions`
+**Symptom**: `Error: config file /data/.dddns/config.yaml has permissions 644, must be 600 (chmod 600 /data/.dddns/config.yaml)`
 
-**Solutions**:
+**Cause**: As of v0.2.0 dddns refuses to load a plaintext config whose mode is anything other than `0600`. The file holds AWS credentials, so a looser mode is a local privilege-escalation vector. The check runs on **every** command that loads config, not just at creation time — if you `chmod 644` the file after setup, every subsequent run fails with this error.
+
+**Fix**:
 
 ```bash
-# Fix permissions
-chmod 600 ~/.dddns/config.yaml
+# Standard plaintext config
+chmod 600 ~/.dddns/config.yaml         # Linux / macOS
+chmod 600 /data/.dddns/config.yaml     # UDM / UDR
 chmod 700 ~/.dddns
 
-# Check ownership
+# Encrypted (.secure) config is stricter still
+chmod 400 ~/.dddns/config.secure
+
+# Confirm ownership matches the user running dddns
+ls -la ~/.dddns/
 chown $(whoami):$(whoami) ~/.dddns/config.yaml
 ```
+
+Re-run `dddns config check` — the error should clear immediately.
 
 ## AWS/Route53 Errors
 
 ### AWS Credentials Not Found
 
-**Symptom**: `Error: failed to load AWS config`
+**Symptom**: `Error: aws_access_key is required in config file` (or similar).
+
+As of v0.2.0 dddns reads credentials **only** from its own config file. It does not consult `~/.aws/credentials`, environment variables, or named AWS CLI profiles.
 
 **Solutions**:
 
 ```bash
-# Check AWS profile
-aws configure list --profile dddns
+# Check what dddns sees:
+dddns config check
 
-# Set up credentials
-aws configure --profile dddns
+# If missing / wrong, re-enter them via the interactive wizard:
+dddns config init
 
-# Use environment variables
-export AWS_ACCESS_KEY_ID=your-key
-export AWS_SECRET_ACCESS_KEY=your-secret
-export AWS_REGION=us-east-1
-
-# Check credentials file
-cat ~/.aws/credentials
+# Or edit the config directly (UDM / UDR: /data/.dddns/config.yaml):
+${EDITOR:-vi} ~/.dddns/config.yaml
 ```
+
+Required fields:
+```yaml
+aws_region: "us-east-1"
+aws_access_key: "AKIA..."
+aws_secret_key: "..."
+hosted_zone_id: "Z..."
+hostname: "home.example.com"
+```
+
+Ensure the file is exactly `chmod 600` after editing — dddns refuses to load anything looser.
 
 ### Access Denied
 
@@ -265,6 +324,31 @@ ping -c 10 route53.amazonaws.com
 traceroute route53.amazonaws.com
 ```
 
+### WAN IP Wrong or Not Detected (UDR7)
+
+**Symptom**: `dddns update` with `ip_source: local` (or serve mode) fails with `auto-detect WAN interface: ...`, or the IP pushed to Route53 is from the wrong interface.
+
+**Cause**: The UDR7 (and some multi-WAN configurations) runs with policy-based routing — the default route for WAN egress lives in a non-main routing table, so `/proc/net/route` has no `00000000` entry when queried from the main table. Earlier releases assumed the main table was authoritative and would fail here.
+
+**Fix**: v0.2.0 adds a rule-based fallback. When `ip_source: local` is in effect and the main table has no default, dddns scans all up, non-loopback interfaces and picks the first one with a publicly-routable IPv4 (rejecting RFC1918, CGNAT `100.64.0.0/10`, link-local, and IPv6). No interface name is hard-coded.
+
+If the fallback picks the wrong interface (e.g. LTE failover when you want the wired WAN), pin it explicitly:
+
+```yaml
+server:
+  wan_interface: "eth4"   # or pppoe-wan0, ppp0, ...
+```
+
+Or set it globally via the `ip_source: local` path by re-checking `ip -4 addr show` and confirming which interface holds the expected public address. UDM Pro / UDM SE / UDM Pro Max still have their default route in the main table and will use the first path — they're not affected.
+
+The `--probe` output's `default route:` line tells you whether the fallback is needed:
+
+```
+[network (metadata only)]
+  default route:   (none — main table has no default)   # fallback will run
+  public IPv4:     1 interface(s)
+```
+
 ## UDM-Specific Issues
 
 ### Lost After Reboot
@@ -329,6 +413,40 @@ grep CRON /var/log/messages | tail -20
 ```
 
 If you're in serve mode, there is no cron entry — `/etc/cron.d/dddns` should be absent. Updates are triggered by the UniFi Dynamic DNS UI; see [Serve Mode Issues](#serve-mode-issues) below.
+
+### Cron Logs Are Empty (`/var/log/dddns.log` Stopped Growing)
+
+**Symptom**: `/var/log/dddns.log` hasn't gained bytes in hours or days, even though `crontab -l` / `cat /etc/cron.d/dddns` shows the entry is there and cron is running.
+
+**Cause**: As of v0.2.0 the generated cron entry is:
+
+```cron
+*/30 * * * * root /usr/local/bin/dddns update --quiet >> /var/log/dddns.log 2>&1
+```
+
+With `--quiet`, dddns writes nothing when the IP is unchanged — which is the steady-state outcome most runs. It only logs when the IP actually changes (one `good` line) or something fails (an `ERROR` line). This is by design; the pre-v0.2.0 entry printed a `[timestamp] Running...` banner on every tick, which was noise.
+
+**Confirm it's working**:
+
+```bash
+# Was cron invoked recently?
+grep CRON /var/log/messages | grep dddns | tail -5
+
+# Force a run to confirm the binary still works
+dddns update --dry-run
+
+# Check the cache — mtime tells you the last time dddns ran to completion
+ls -la /data/.dddns/last-ip.txt
+```
+
+**If you want verbose cron logs anyway**, hand-roll a custom entry alongside the managed one (see `udm-guide.md` → Custom Update Interval):
+
+```bash
+# /etc/cron.d/dddns-verbose
+*/30 * * * * root /usr/local/bin/dddns update >> /var/log/dddns.log 2>&1
+```
+
+Drop `--quiet` and the pre-v0.2.0 verbosity returns. Remember the managed `/etc/cron.d/dddns` is regenerated by the boot script on every boot — don't edit it directly.
 
 ## Serve Mode Issues
 

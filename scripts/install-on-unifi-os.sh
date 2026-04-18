@@ -734,12 +734,15 @@ gather_environment() {
     if [[ -f "${BOOT_SCRIPT}" ]]; then
         ENV_STATE[bootscript]="${BOOT_SCRIPT} ($(stat -c%s "${BOOT_SCRIPT}") bytes)"
     fi
-    ENV_STATE[log_file]="(none)"
+    # Cron-mode logging moved to journald as of v0.2.1; the flat file below
+    # is a legacy artefact from older installs. Report it if present so
+    # triaged issues can explain why the file still exists.
+    ENV_STATE[log_file]="(none — journalctl -t dddns is the current sink)"
     if [[ -f "${LOG_FILE}" ]]; then
         local size mtime
         size=$(du -h "${LOG_FILE}" 2>/dev/null | awk '{print $1}' || echo "?")
         mtime=$(stat -c%y "${LOG_FILE}" 2>/dev/null | cut -d. -f1 || echo "?")
-        ENV_STATE[log_file]="${LOG_FILE} (${size}, last-modified ${mtime})"
+        ENV_STATE[log_file]="${LOG_FILE} (${size}, last-modified ${mtime}; legacy — safe to delete)"
     fi
     ENV_STATE[free_data]="$(df -BM /data 2>/dev/null | awk 'NR==2 {print $4}' || echo unknown)"
     ENV_STATE[verbose]=$([[ "$VERBOSE" == "1" ]] && echo yes || echo no)
@@ -1323,7 +1326,7 @@ print_success() {
         echo "  2. dddns config check        # validate config"
         echo "  3. dddns update --dry-run    # sanity-check an update"
         if [[ "$mode" == "cron" ]]; then
-            echo "  4. tail -f ${LOG_FILE}       # watch the next cron run"
+            echo "  4. journalctl -t dddns -f    # watch the next cron run"
         else
             echo "  4. dddns serve test          # exercise the listener"
             echo "  5. dddns serve status        # see last-request summary"

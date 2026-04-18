@@ -18,12 +18,18 @@ func TestGenerate_Cron(t *testing.T) {
 		"systemctl stop dddns.service",
 		"systemctl disable dddns.service",
 		`rm -f "$SYSTEMD_UNIT"`,
-		// Cron install.
-		"*/30 * * * * root /usr/local/bin/dddns update --quiet",
-		"/var/log/dddns.log",
+		// Cron install — logger -t dddns pipes to journald, rotation handled there.
+		"*/30 * * * * root /usr/local/bin/dddns update --quiet 2>&1 | /usr/bin/logger -t dddns",
 		"/etc/init.d/cron restart",
 	})
 	mustNotContain(t, out, []string{
+		// Flat-file redirect retired — journald owns cron-mode output. The
+		// literal string "/var/log/dddns.log" still appears in explanatory
+		// comments inside the generated script (migration note), so we
+		// assert on the redirect syntax, which is what actually routes
+		// cron output to disk.
+		">> /var/log/dddns.log",
+		"2>&1 >> /var/log",
 		// Cron mode must not start the daemon.
 		"systemctl enable dddns.service",
 		"systemctl restart dddns.service",
@@ -91,7 +97,6 @@ func TestGenerate_CustomPaths(t *testing.T) {
 		BinaryPath:     "/opt/dddns/bin/dddns",
 		ConfigDir:      "/opt/dddns/etc",
 		CronEntryPath:  "/opt/dddns/etc/cron",
-		UpdateLogPath:  "/opt/dddns/log/update.log",
 		UpdateInterval: "*/15 * * * *",
 	}
 	out, err := Generate(p)
@@ -102,7 +107,6 @@ func TestGenerate_CustomPaths(t *testing.T) {
 		"/opt/dddns/bin/dddns",
 		"/opt/dddns/etc",
 		"/opt/dddns/etc/cron",
-		"/opt/dddns/log/update.log",
 		"*/15 * * * *",
 	})
 }

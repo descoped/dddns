@@ -18,7 +18,6 @@ type Params struct {
 	BinaryPath     string // e.g. /data/dddns/dddns
 	ConfigDir      string // e.g. /data/.dddns
 	CronEntryPath  string // e.g. /etc/cron.d/dddns
-	UpdateLogPath  string // e.g. /var/log/dddns.log
 	UpdateInterval string // crontab schedule; e.g. "*/30 * * * *"
 }
 
@@ -29,7 +28,6 @@ func DefaultUnifiParams(mode string) Params {
 		BinaryPath:     "/data/dddns/dddns",
 		ConfigDir:      "/data/.dddns",
 		CronEntryPath:  "/etc/cron.d/dddns",
-		UpdateLogPath:  "/var/log/dddns.log",
 		UpdateInterval: "*/30 * * * *",
 	}
 }
@@ -86,10 +84,18 @@ if [ -f "$SYSTEMD_UNIT" ]; then
 fi
 
 # Install / refresh the cron entry.
+#
+# Output goes through logger(1) → /dev/log → systemd-journald. Journald
+# handles rotation itself; we don't need the old /var/log/dddns.log flat
+# file any more. View recent output with:
+#   journalctl -t dddns --since "24h ago"
+# Stderr is merged into stdout before the pipe so error lines ("failed
+# to update Route53: ...") reach the journal too. --quiet keeps noop
+# runs silent; the journal only grows on real events.
 cat > "$CRON_PATH" <<'CRON'
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-%s root /usr/local/bin/dddns update --quiet >> %s 2>&1
+%s root /usr/local/bin/dddns update --quiet 2>&1 | /usr/bin/logger -t dddns
 CRON
 
 /etc/init.d/cron restart >/dev/null 2>&1 || true
@@ -143,7 +149,7 @@ systemctl restart dddns.service
 
 func renderCron(p Params) string {
 	return fmt.Sprintf(commonHeader, p.BinaryPath, p.ConfigDir, p.CronEntryPath) +
-		fmt.Sprintf(cronTail, p.UpdateInterval, p.UpdateLogPath)
+		fmt.Sprintf(cronTail, p.UpdateInterval)
 }
 
 func renderServe(p Params) string {

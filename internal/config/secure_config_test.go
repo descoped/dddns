@@ -1,12 +1,14 @@
 package config_test
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/descoped/dddns/internal/config"
+	"github.com/descoped/dddns/internal/constants"
 )
 
 // TestSaveLoadSecure_WithServerBlock exercises a full round-trip of a
@@ -182,5 +184,211 @@ func TestLoadSecure_TamperedVault(t *testing.T) {
 
 	if _, err := config.LoadSecure(securePath); err == nil {
 		t.Error("expected LoadSecure to fail on tampered secret_vault, got nil")
+	}
+}
+
+// TestSaveSecure_EnforcesSecurePermsOnWrite guards the security boundary:
+// SaveSecure must leave the on-disk file at 0400 so no other local user
+// can read the encrypted vault for offline attack.
+func TestSaveSecure_EnforcesSecurePermsOnWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.secure")
+
+	cfg := &config.Config{
+		AWSRegion:    "us-east-1",
+		AWSAccessKey: "AKIAIOSFODNN7EXAMPLE",
+		AWSSecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		HostedZoneID: "Z1ABCDEFGHIJKL",
+		Hostname:     "test.example.com",
+		TTL:          300,
+	}
+	if err := config.SaveSecure(cfg, path); err != nil {
+		t.Fatalf("SaveSecure: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != constants.SecureConfigPerm {
+		t.Errorf("secure config perms = %04o, want %04o", mode, constants.SecureConfigPerm)
+	}
+}
+
+// TestLoadSecure_RejectsWorldReadablePerms mirrors the plaintext guard
+// — even an encrypted file at 0644 is not loaded, because allowing it
+// would signal that world-readable vaults are acceptable practice.
+func TestLoadSecure_RejectsWorldReadablePerms(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.secure")
+
+	cfg := &config.Config{
+		AWSRegion:    "us-east-1",
+		AWSAccessKey: "AKIAIOSFODNN7EXAMPLE",
+		AWSSecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		HostedZoneID: "Z1ABCDEFGHIJKL",
+		Hostname:     "test.example.com",
+		TTL:          300,
+	}
+	if err := config.SaveSecure(cfg, path); err != nil {
+		t.Fatalf("SaveSecure: %v", err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	if _, err := config.LoadSecure(path); err == nil {
+		t.Fatal("LoadSecure accepted 0644 secure config; expected rejection")
+	}
+}
+
+// TestSaveSecure_OverwriteChmodsBackTo0400 covers the "rotate-secret
+// over existing 0400 file" flow. SaveSecure temporarily chmods to 0600
+// so the write can truncate; a regression leaving the file at 0600
+// would silently weaken the security boundary after a rotation.
+func TestSaveSecure_OverwriteChmodsBackTo0400(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.secure")
+
+	cfg := &config.Config{
+		AWSRegion:    "us-east-1",
+		AWSAccessKey: "AKIAIOSFODNN7EXAMPLE",
+		AWSSecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		HostedZoneID: "Z1ABCDEFGHIJKL",
+		Hostname:     "test.example.com",
+		TTL:          300,
+	}
+	if err := config.SaveSecure(cfg, path); err != nil {
+		t.Fatalf("first SaveSecure: %v", err)
+	}
+
+	cfg.TTL = 600
+	if err := config.SaveSecure(cfg, path); err != nil {
+		t.Fatalf("second SaveSecure over existing 0400 file: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != constants.SecureConfigPerm {
+		t.Errorf("perms after overwrite = %04o, want %04o", mode, constants.SecureConfigPerm)
+	}
+
+	loaded, err := config.LoadSecure(path)
+	if err != nil {
+		t.Fatalf("LoadSecure after overwrite: %v", err)
+	}
+	if loaded.TTL != 600 {
+		t.Errorf("re-saved TTL not reflected: got %d, want 600", loaded.TTL)
+	}
+}
+
+// TestLoadSecure_RejectsTamperedCredentialsVault is the AES-GCM auth-tag
+// guard for aws_credentials_vault (complement to the existing
+// secret_vault tamper test). Flipping the last byte of the decoded
+// ciphertext must surface as a decrypt error, not silent garbage.
+func TestLoadSecure_RejectsTamperedCredentialsVault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.secure")
+
+	cfg := &config.Config{
+		AWSRegion:    "us-east-1",
+		AWSAccessKey: "AKIAIOSFODNN7EXAMPLE",
+		AWSSecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		HostedZoneID: "Z1ABCDEFGHIJKL",
+		Hostname:     "test.example.com",
+		TTL:          300,
+	}
+	if err := config.SaveSecure(cfg, path); err != nil {
+		t.Fatalf("SaveSecure: %v", err)
+	}
+
+	if err := os.Chmod(path, constants.ConfigFilePerm); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	tampered := flipLastByteOfVault(t, string(raw), "aws_credentials_vault:")
+	if err := os.WriteFile(path, []byte(tampered), constants.ConfigFilePerm); err != nil {
+		t.Fatalf("write tampered: %v", err)
+	}
+	if err := os.Chmod(path, constants.SecureConfigPerm); err != nil {
+		t.Fatalf("chmod back: %v", err)
+	}
+
+	_, err = config.LoadSecure(path)
+	if err == nil {
+		t.Fatal("LoadSecure accepted tampered aws_credentials_vault; GCM auth tag should reject it")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "decrypt") {
+		t.Errorf("error should cite decrypt failure, got: %v", err)
+	}
+}
+
+// flipLastByteOfVault decodes the base64 value of the YAML line starting
+// with prefix, flips its last byte, and returns the re-encoded YAML.
+func flipLastByteOfVault(t *testing.T, yaml, prefix string) string {
+	t.Helper()
+	lines := strings.Split(yaml, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			continue
+		}
+		idx := strings.Index(line, ":")
+		value := strings.TrimSpace(line[idx+1:])
+		value = strings.Trim(value, "\"")
+
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		if err != nil {
+			t.Fatalf("decode vault: %v", err)
+		}
+		if len(decoded) == 0 {
+			t.Fatalf("%s is empty", prefix)
+		}
+		decoded[len(decoded)-1] ^= 0xFF
+		lines[i] = line[:idx+1] + " " + base64.StdEncoding.EncodeToString(decoded)
+		return strings.Join(lines, "\n")
+	}
+	t.Fatalf("line starting with %q not found in YAML:\n%s", prefix, yaml)
+	return yaml
+}
+
+// TestMigrateToSecure_WipesPlaintext guards the "migration leaves no
+// plaintext on disk" contract. A silently-failed wipe would leave the
+// operator with plaintext AWS credentials on a filesystem they now
+// believe is encrypted.
+func TestMigrateToSecure_WipesPlaintext(t *testing.T) {
+	dir := t.TempDir()
+	plaintextPath := filepath.Join(dir, "config.yaml")
+	securePath := filepath.Join(dir, "config.secure")
+
+	cfg := &config.Config{
+		AWSRegion:    "us-east-1",
+		AWSAccessKey: "AKIAIOSFODNN7EXAMPLE",
+		AWSSecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		HostedZoneID: "Z1ABCDEFGHIJKL",
+		Hostname:     "test.example.com",
+		TTL:          300,
+		IPCacheFile:  filepath.Join(dir, "last-ip.txt"),
+	}
+	content := config.FormatConfigYAML(cfg)
+	if err := os.WriteFile(plaintextPath, []byte(content), constants.ConfigFilePerm); err != nil {
+		t.Fatalf("write plaintext: %v", err)
+	}
+	config.SetActivePath(plaintextPath)
+	t.Cleanup(func() { config.SetActivePath("") })
+
+	if err := config.MigrateToSecure(plaintextPath, securePath); err != nil {
+		t.Fatalf("MigrateToSecure: %v", err)
+	}
+
+	if _, err := os.Stat(plaintextPath); !os.IsNotExist(err) {
+		t.Errorf("plaintext config still exists after migration: err=%v", err)
+	}
+	if _, err := os.Stat(securePath); err != nil {
+		t.Errorf("secure config missing after migration: %v", err)
 	}
 }

@@ -228,3 +228,74 @@ func TestRoute53Client_Auth_RejectsMissingCredentials(t *testing.T) {
 		})
 	}
 }
+
+// TestParseAWSError_ShapeMatrix covers the three body shapes
+// parseAWSError handles. The function is the only thing translating
+// Route53 HTTP failures into operator-facing error text, so a
+// regression here turns every Route53 error into an opaque HTTP status.
+func TestParseAWSError_ShapeMatrix(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		wantInclude []string
+	}{
+		{
+			name:   "ErrorResponse wrapper (most common)",
+			status: 400,
+			body: `<?xml version="1.0" encoding="UTF-8"?>
+<ErrorResponse>
+  <Error>
+    <Type>Sender</Type>
+    <Code>InvalidChangeBatch</Code>
+    <Message>Tried to create resource record set but it already exists</Message>
+  </Error>
+  <RequestId>abc-123</RequestId>
+</ErrorResponse>`,
+			wantInclude: []string{"HTTP 400", "InvalidChangeBatch", "already exists"},
+		},
+		{
+			name:   "flat Error root (STS-style)",
+			status: 403,
+			body: `<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+  <Code>AccessDenied</Code>
+  <Message>User is not authorized to perform route53:ChangeResourceRecordSets</Message>
+</Error>`,
+			wantInclude: []string{"HTTP 403", "AccessDenied", "not authorized"},
+		},
+		{
+			name:        "unparseable body falls back to raw",
+			status:      502,
+			body:        "upstream connect error or disconnect/reset before headers. reset reason: connection timeout",
+			wantInclude: []string{"HTTP 502", "upstream connect error"},
+		},
+		{
+			name:        "empty body",
+			status:      500,
+			body:        "",
+			wantInclude: []string{"HTTP 500"},
+		},
+		{
+			name:        "oversized body snippet gets truncated with ellipsis",
+			status:      500,
+			body:        "garbage " + strings.Repeat("x", 400),
+			wantInclude: []string{"HTTP 500", "..."},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := parseAWSError(tc.status, []byte(tc.body))
+			if err == nil {
+				t.Fatal("parseAWSError returned nil; all inputs should produce a non-nil error")
+			}
+			msg := err.Error()
+			for _, want := range tc.wantInclude {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error missing %q\n---\ngot: %s", want, msg)
+				}
+			}
+		})
+	}
+}

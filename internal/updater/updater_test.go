@@ -391,3 +391,81 @@ func TestUpdate_ContextTimeout(t *testing.T) {
 		t.Errorf("expected context.DeadlineExceeded, got: %v", err)
 	}
 }
+
+// TestUpdate_GetCurrentIPErrorDoesNotAbort covers the non-obvious branch
+// where GetCurrentIP fails with a non-context error. The updater logs a
+// warning and proceeds to UPSERT — aborting here would mean a transient
+// 5xx on the List path blocks the update entirely, defeating the point.
+func TestUpdate_GetCurrentIPErrorDoesNotAbort(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := baseConfig(tmpDir)
+	fake := &fakeDNSClient{getErr: errors.New("transient 502 Bad Gateway")}
+
+	result, err := Update(context.Background(), cfg, Options{
+		OverrideIP: testPublicIP,
+		Client:     fake,
+		Quiet:      true,
+	})
+	if err != nil {
+		t.Fatalf("Update returned error despite GetCurrentIP failure; should log + proceed: %v", err)
+	}
+	if result.Action != "updated" {
+		t.Errorf("Action = %q, want \"updated\" after GetCurrentIP warning", result.Action)
+	}
+	if !fake.updateCalled {
+		t.Error("UpdateIP should have been called even after GetCurrentIP failure")
+	}
+}
+
+// TestUpdate_UpdateIPErrorPropagates is the complement to the above:
+// an error from UpdateIP (the actual UPSERT) must surface to the
+// caller. A regression swallowing it would claim success while the
+// DNS record stayed stale.
+func TestUpdate_UpdateIPErrorPropagates(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := baseConfig(tmpDir)
+	upsertErr := errors.New("route53 InvalidChangeBatch")
+	fake := &fakeDNSClient{getIP: "1.1.1.1", updateErr: upsertErr}
+
+	_, err := Update(context.Background(), cfg, Options{
+		OverrideIP: testPublicIP,
+		Client:     fake,
+		Quiet:      true,
+	})
+	if err == nil {
+		t.Fatal("Update returned nil despite UpdateIP failure")
+	}
+	if !errors.Is(err, upsertErr) {
+		t.Errorf("Update err = %v, want wrap of %v", err, upsertErr)
+	}
+}
+
+// TestUpdate_DryRunWithExistingCache covers the "Would update cache
+// from %s to %s" branch of the dry-run logger. Without a pre-populated
+// cache the branch stays cold; covered explicitly here to guard
+// against a subtle formatting regression that would only trigger on
+// the second dry-run of a day.
+func TestUpdate_DryRunWithExistingCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := baseConfig(tmpDir)
+	if err := writeCachedIP(cfg.IPCacheFile, "198.51.100.5"); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeDNSClient{getIP: "1.1.1.1"} // DNS differs from OverrideIP — proceed to dry-run
+
+	result, err := Update(context.Background(), cfg, Options{
+		OverrideIP: testPublicIP, // differs from cache — dry-run branch activates
+		DryRun:     true,
+		Client:     fake,
+		Quiet:      false, // exercise the verbose-but-silent log path
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if result.Action != "dry-run" {
+		t.Errorf("Action = %q, want \"dry-run\"", result.Action)
+	}
+	if fake.updateCalled {
+		t.Error("UpdateIP should not be called on dry-run even with existing cache")
+	}
+}

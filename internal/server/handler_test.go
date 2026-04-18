@@ -352,6 +352,85 @@ func TestReadStatus_Malformed(t *testing.T) {
 	}
 }
 
+// TestStatusWriter_Write_ParentDirMissing covers the CreateTemp failure
+// path. A missing parent directory must surface the underlying error
+// cleanly and leave no partial status file behind — a silent failure
+// here would mean operators see stale "serve status" forever.
+func TestStatusWriter_Write_ParentDirMissing(t *testing.T) {
+	nowhere := filepath.Join(t.TempDir(), "does-not-exist", "status.json")
+	w := NewStatusWriter(nowhere)
+
+	err := w.Write(StatusSnapshot{LastRequestAt: time.Now()})
+	if err == nil {
+		t.Fatal("Write accepted a path whose parent directory does not exist")
+	}
+	if !strings.Contains(err.Error(), "tmp status") && !strings.Contains(err.Error(), "create") {
+		t.Errorf("error should cite tmp/create failure, got: %v", err)
+	}
+	if _, statErr := os.Stat(nowhere); !os.IsNotExist(statErr) {
+		t.Errorf("partial status file exists after Write failure: %v", statErr)
+	}
+}
+
+// TestStatusWriter_Write_TargetIsDirectory covers the os.Rename failure
+// branch: when the destination path is an existing directory, Rename
+// fails with ENOTEMPTY/EISDIR. Write must surface the error and leave
+// the temp file cleaned up — a leaked temp would accumulate under
+// /data/.dddns on a busy server.
+func TestStatusWriter_Write_TargetIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	// Make s.path a directory — Rename from tmpfile to directory fails.
+	path := filepath.Join(dir, "status.json")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+
+	w := NewStatusWriter(path)
+	err := w.Write(StatusSnapshot{LastRequestAt: time.Now()})
+	if err == nil {
+		t.Fatal("Write succeeded despite target being a directory")
+	}
+	if !strings.Contains(err.Error(), "rename") {
+		t.Errorf("error should cite rename failure, got: %v", err)
+	}
+	// No stray .serve-status-*.tmp should remain.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".serve-status-") && strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("leaked temp file after rename failure: %s", e.Name())
+		}
+	}
+}
+
+// TestStatusWriter_Write_ReadOnlyParent is the OS-level failure probe:
+// a chmod 0500 parent dir must make os.CreateTemp fail cleanly.
+// Skipped when running as root (EUID 0 bypasses mode bits and the
+// test's precondition doesn't hold).
+func TestStatusWriter_Write_ReadOnlyParent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("EUID 0 bypasses file mode checks; can't simulate read-only parent")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod parent ro: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	w := NewStatusWriter(path)
+	err := w.Write(StatusSnapshot{LastRequestAt: time.Now()})
+	if err == nil {
+		t.Fatal("Write succeeded on a read-only parent directory")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("partial status file exists after read-only Write failure: %v", statErr)
+	}
+}
+
 // TestStatusWriter_Atomic verifies a concurrent read never sees a
 // partially-written file. The writer goroutine is joined before the
 // test returns so t.TempDir's cleanup doesn't race an in-flight

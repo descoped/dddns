@@ -89,11 +89,15 @@ VERBOSE="${DDDNS_DEBUG:-0}"
 # Logging
 # ---------------------------------------------------------------------------
 
-log_info()    { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+# All log functions write to stderr. Stdout is reserved for function
+# return values captured via $(...). Routing log_info/log_success to stdout
+# was a latent bug that surfaced once resolve_mode / resolve_version moved
+# return values out of globals and into command substitution.
+log_info()    { echo -e "${BLUE}[INFO]${NC} $1" >&2; }
+log_success() { echo -e "${GREEN}[✓]${NC} $1" >&2; }
 log_error()   { echo -e "${RED}[✗]${NC} $1" >&2; }
-log_warning() { echo -e "${YELLOW}[!]${NC} $1"; }
-log_phase()   { echo -e "${BLUE}[$1]${NC} $2"; }
+log_warning() { echo -e "${YELLOW}[!]${NC} $1" >&2; }
+log_phase()   { echo -e "${BLUE}[$1]${NC} $2" >&2; }
 log_debug()   { [[ "$VERBOSE" == "1" ]] && echo -e "${YELLOW}[DEBUG]${NC} $1" >&2 || true; }
 
 # vexec runs a command silently unless VERBOSE=1, in which case its stdout

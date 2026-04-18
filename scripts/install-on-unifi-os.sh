@@ -822,9 +822,17 @@ probe_section_dddns_install() {
         local ver arch_detail size
         ver=$(binary_version_line "${INSTALL_DIR}/${BINARY_NAME}")
         size=$(stat -c%s "${INSTALL_DIR}/${BINARY_NAME}")
-        arch_detail=$(file "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null | awk -F: '{gsub(/^[[:space:]]+/,"",$2); print $2}' | awk -F, '{print $1 ", " $2}' || echo "?")
+        # `file -b` skips the leading filename so parsing stays simple.
+        # Keep the first two comma-separated fields — typically enough to
+        # confirm ELF class + CPU family without dumping the full BuildID.
+        if command -v file >/dev/null 2>&1; then
+            arch_detail=$(file -b "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null | awk -F, '{print $1", "$2}')
+            [[ -z "$arch_detail" ]] && arch_detail="(unknown)"
+        else
+            arch_detail="(file command unavailable)"
+        fi
         printf '  binary:          %s (%s bytes)\n' "${INSTALL_DIR}/${BINARY_NAME}" "$size"
-        printf '  file type:       %s\n' "${arch_detail:-?}"
+        printf '  file type:       %s\n' "$arch_detail"
         printf '  version:         %s\n' "${ver:-?}"
     else
         printf '  binary:          (not installed)\n'
@@ -859,17 +867,22 @@ probe_section_dddns_install() {
 probe_section_systemd() {
     probe_section_header "systemd units"
     if [[ -f "${SYSTEMD_UNIT}" ]]; then
+        # `systemctl is-active` always writes a status word to stdout
+        # ("active" / "inactive" / "failed" / "activating" ...) AND exits
+        # non-zero for anything but "active". Trailing `|| true` discards
+        # the exit code without polluting the captured value.
         local active enabled
-        active=$(systemctl is-active dddns.service 2>/dev/null || echo "unknown")
-        enabled=$(systemctl is-enabled dddns.service 2>/dev/null || echo "unknown")
-        printf '  dddns.service:   %s (active=%s, enabled=%s)\n' "${SYSTEMD_UNIT}" "$active" "$enabled"
+        active=$(systemctl is-active dddns.service 2>/dev/null || true)
+        enabled=$(systemctl is-enabled dddns.service 2>/dev/null || true)
+        printf '  dddns.service:   %s (active=%s, enabled=%s)\n' \
+            "${SYSTEMD_UNIT}" "${active:-unknown}" "${enabled:-unknown}"
     else
         printf '  dddns.service:   (absent)\n'
     fi
     if [[ -f /etc/systemd/system/udm-boot.service ]]; then
         local active
-        active=$(systemctl is-active udm-boot.service 2>/dev/null || echo "unknown")
-        printf '  udm-boot:        present (active=%s)\n' "$active"
+        active=$(systemctl is-active udm-boot.service 2>/dev/null || true)
+        printf '  udm-boot:        present (active=%s)\n' "${active:-unknown}"
     fi
 }
 

@@ -7,7 +7,7 @@
 #   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
 #   ./install-on-unifi-os.sh [--mode cron|serve] [--version <tag>]
 #                            [--force] [--verbose]
-#                            [--probe | --uninstall | --rollback]
+#                            [--probe | --disable | --uninstall | --rollback]
 #
 # Version selection:
 #   Without --version, the latest non-prerelease tag is used. Pre-release tags
@@ -1078,8 +1078,19 @@ probe_command() {
 # Top-level actions
 # ---------------------------------------------------------------------------
 
-uninstall() {
-    log_warning "Uninstalling dddns..."
+# disable_service stops the active update loop without touching the
+# binary, config, or cache. Shared by --disable and --uninstall.
+#
+# What it removes:
+#   - /etc/systemd/system/dddns.service (serve mode unit)
+#   - /etc/cron.d/dddns (cron entry)
+#   - /data/on_boot.d/20-dddns.sh (which would regenerate both on boot)
+#
+# What it leaves alone:
+#   - /data/dddns/<binary> + its .prev snapshot
+#   - /data/.dddns/ (config.yaml, config.secure, last-ip.txt)
+#   - /usr/local/bin/dddns symlink (harmless without a scheduler)
+disable_service() {
     if [[ -f "${SYSTEMD_UNIT}" ]]; then
         vexec systemctl stop dddns.service || true
         vexec systemctl disable dddns.service || true
@@ -1089,6 +1100,32 @@ uninstall() {
     rm -f "${CRON_FILE}"
     vexec /etc/init.d/cron restart || true
     rm -f "${BOOT_SCRIPT}"
+}
+
+# disable is the soft-stop action: retires the update loop but leaves
+# the binary and config on disk so re-enabling is a single installer
+# re-run. Useful when migrating dddns's role (e.g. off a UniFi device
+# onto an AWS Lambda) without committing to full removal.
+disable() {
+    log_warning "Disabling dddns update loop..."
+    disable_service
+    echo ""
+    log_success "dddns disabled"
+    echo ""
+    log_info "Preserved (binary + config stay on disk):"
+    log_info "  ${INSTALL_DIR}/${BINARY_NAME}"
+    log_info "  ${CONFIG_DIR}/"
+    log_info "  /usr/local/bin/${BINARY_NAME} (symlink)"
+    echo ""
+    log_info "To re-enable later, re-run the installer:"
+    log_info "  $(invocation_hint --force)"
+    log_info "To fully remove the binary and install dir:"
+    log_info "  $(invocation_hint --uninstall)"
+}
+
+uninstall() {
+    log_warning "Uninstalling dddns..."
+    disable_service
     rm -f "/usr/local/bin/${BINARY_NAME}"
     rm -rf "${INSTALL_DIR}"
     log_warning "Configuration preserved at ${CONFIG_DIR}"
@@ -1134,7 +1171,16 @@ Options:
   --probe             Print a privacy-safe self-diagnosis block (no IPs,
                       no config values, no log contents) without changing
                       any state. Output is safe to paste in a GitHub issue.
-  --uninstall         Remove dddns. Preserves configuration.
+  --disable           Stop the update loop but leave the binary, config,
+                      and symlink on disk. Removes the cron file,
+                      systemd unit, and boot script (the three pieces
+                      that would regenerate/restart the loop). Useful
+                      when migrating the DDNS role elsewhere (e.g. to
+                      an AWS Lambda) without committing to full removal.
+                      Re-run the installer with --force to re-enable.
+  --uninstall         Remove dddns (includes --disable, then also deletes
+                      the binary and install directory). Preserves
+                      configuration at ${CONFIG_DIR:-/data/.dddns}.
   --rollback          Restore the previous binary + boot script + cron
                       entry from the .prev snapshots written by the last
                       install.
@@ -1156,6 +1202,7 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --uninstall) CLI_ACTION="uninstall"; shift ;;
+            --disable)   CLI_ACTION="disable";   shift ;;
             --rollback)  CLI_ACTION="rollback";  shift ;;
             --probe)     CLI_ACTION="probe";     shift ;;
             --force)     CLI_FORCE="true";       shift ;;
@@ -1351,6 +1398,7 @@ main() {
 
     case "$CLI_ACTION" in
         probe)     probe_command; exit 0 ;;
+        disable)   disable;       exit 0 ;;
         uninstall) uninstall;     exit 0 ;;
         install)
             print_banner "dddns Installer for UniFi Dream"

@@ -221,7 +221,7 @@ func TestRoute53Client_Auth_RejectsMissingCredentials(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewRoute53Client(context.Background(), "us-east-1", tc.ak, tc.sk, "Z1", "h.example.com", 300)
+			_, err := NewRoute53Client(context.Background(), "us-east-1", tc.ak, tc.sk, "", "Z1", "h.example.com", 300)
 			if err == nil {
 				t.Error("expected error for missing credentials, got nil")
 			}

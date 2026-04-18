@@ -32,6 +32,7 @@ const (
 type Route53Client struct {
 	accessKey    string
 	secretKey    string
+	sessionToken string // empty for long-lived IAM user creds; set for STS temp creds
 	hostedZoneID string
 	hostname     string
 	ttl          int64
@@ -47,15 +48,23 @@ type Route53Client struct {
 // Route53 is a global service so SigV4 signing always uses us-east-1 regardless
 // of what the caller passes.
 //
+// sessionToken is empty for the normal cron/serve path (long-lived IAM user
+// access key + secret). It's populated by the Lambda deployment form, which
+// reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN from
+// Lambda's env vars — those are STS temporary credentials issued to the
+// Lambda's execution role, and Route53 rejects them unless the token
+// flows through as an X-Amz-Security-Token header in the signed request.
+//
 // ctx is accepted for API symmetry with the prior SDK-based constructor but
 // is not currently used — construction is purely local (no network calls).
-func NewRoute53Client(_ context.Context, _ /*region*/, accessKey, secretKey, hostedZoneID, hostname string, ttl int64) (*Route53Client, error) {
+func NewRoute53Client(_ context.Context, _ /*region*/, accessKey, secretKey, sessionToken, hostedZoneID, hostname string, ttl int64) (*Route53Client, error) {
 	if accessKey == "" || secretKey == "" {
-		return nil, fmt.Errorf("AWS credentials are required in config file (aws_access_key and aws_secret_key)")
+		return nil, fmt.Errorf("AWS credentials are required (aws_access_key and aws_secret_key)")
 	}
 	return &Route53Client{
 		accessKey:    accessKey,
 		secretKey:    secretKey,
+		sessionToken: sessionToken,
 		hostedZoneID: hostedZoneID,
 		hostname:     hostname,
 		ttl:          ttl,
@@ -66,8 +75,11 @@ func NewRoute53Client(_ context.Context, _ /*region*/, accessKey, secretKey, hos
 }
 
 // NewFromConfig constructs a Route53Client from a fully-populated dddns Config.
+// The config file has no session-token field — cron/serve installs use
+// long-lived IAM user credentials. Lambda builds its client via
+// NewRoute53Client directly with the env-var-sourced token.
 func NewFromConfig(ctx context.Context, cfg *dddnscfg.Config) (*Route53Client, error) {
-	return NewRoute53Client(ctx, cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
+	return NewRoute53Client(ctx, cfg.AWSRegion, cfg.AWSAccessKey, cfg.AWSSecretKey, "", cfg.HostedZoneID, cfg.Hostname, cfg.TTL)
 }
 
 // fqdn returns the configured hostname in FQDN form (guaranteed trailing dot).
@@ -172,7 +184,7 @@ func (r *Route53Client) UpdateIP(ctx context.Context, newIP string) error {
 // allows callers to avoid re-reading req.Body for signing (the signer needs
 // the payload hash, already computed by the caller).
 func (r *Route53Client) do(req *http.Request, payloadHash string, _ []byte) ([]byte, error) {
-	signRequest(req, r.accessKey, r.secretKey, route53Region, route53Service, payloadHash, r.now())
+	signRequest(req, r.accessKey, r.secretKey, r.sessionToken, route53Region, route53Service, payloadHash, r.now())
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {

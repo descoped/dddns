@@ -20,26 +20,45 @@ const sigV4Algorithm = "AWS4-HMAC-SHA256"
 // Reference: https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html
 //
 // This is a minimal implementation covering the subset dddns needs:
-//   - no STS session tokens (X-Amz-Security-Token)
 //   - no presigned query strings (Authorization header form only)
-//   - signed headers are host + x-amz-date only
 //   - the caller provides the payload hash (hex SHA-256) so streaming payloads stay simple;
 //     for the two request shapes dddns uses — GET with no body and POST with an XML body
 //     fully buffered in memory — this is straightforward
-func signRequest(req *http.Request, accessKey, secretKey, region, service, payloadHash string, now time.Time) {
+//
+// sessionToken handling (for STS temporary credentials — e.g. the creds
+// Lambda injects as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+// AWS_SESSION_TOKEN env vars via its execution role): when non-empty, the
+// token is set as the X-Amz-Security-Token header on the request *before*
+// the canonical request is built, so the header appears in both the
+// alphabetically-sorted canonical-headers block and the signed-headers
+// list. Long-lived IAM user credentials pass "" and get byte-identical
+// behaviour to the no-token form (proven by TestSigV4 vector tests).
+func signRequest(req *http.Request, accessKey, secretKey, sessionToken, region, service, payloadHash string, now time.Time) {
 	timestamp := now.UTC().Format("20060102T150405Z")
 	datestamp := now.UTC().Format("20060102")
 	credentialScope := fmt.Sprintf("%s/%s/%s/aws4_request", datestamp, region, service)
 
 	req.Header.Set("X-Amz-Date", timestamp)
+	if sessionToken != "" {
+		// Must be set before building canonical headers — AWS verifies that
+		// x-amz-security-token appears in the signed-headers list and that
+		// the on-the-wire value matches what was signed.
+		req.Header.Set("X-Amz-Security-Token", sessionToken)
+	}
 
 	host := req.URL.Host
 	if host == "" {
 		host = req.Host
 	}
 
+	// Canonical headers are lowercase name, sorted alphabetically. "host" <
+	// "x-amz-date" < "x-amz-security-token" is the required order.
 	signedHeaders := "host;x-amz-date"
 	canonicalHeaders := fmt.Sprintf("host:%s\nx-amz-date:%s\n", host, timestamp)
+	if sessionToken != "" {
+		signedHeaders += ";x-amz-security-token"
+		canonicalHeaders += fmt.Sprintf("x-amz-security-token:%s\n", sessionToken)
+	}
 
 	canonicalQuery := canonicalQueryString(req.URL.RawQuery)
 	canonicalURI := canonicalURIPath(req.URL.Path)

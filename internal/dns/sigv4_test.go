@@ -72,7 +72,7 @@ func TestCanonicalQueryString(t *testing.T) {
 func TestSignRequest_SetsAuthorizationHeader(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodGet, "https://route53.amazonaws.com/2013-04-01/hostedzone/Z1/rrset?name=x&type=A", nil)
 	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
-	signRequest(req, "AKIDEXAMPLE", "secret", "us-east-1", "route53", emptyPayloadHash, now)
+	signRequest(req, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
 
 	auth := req.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 ") {
@@ -89,5 +89,46 @@ func TestSignRequest_SetsAuthorizationHeader(t *testing.T) {
 	}
 	if req.Header.Get("X-Amz-Date") != "20260417T120000Z" {
 		t.Errorf("X-Amz-Date wrong: %s", req.Header.Get("X-Amz-Date"))
+	}
+	// No session token → X-Amz-Security-Token must not be set (its
+	// presence on the wire without being signed is a bind-time AWS error).
+	if v := req.Header.Get("X-Amz-Security-Token"); v != "" {
+		t.Errorf("empty sessionToken still set header: %q", v)
+	}
+	if strings.Contains(auth, "x-amz-security-token") {
+		t.Errorf("empty sessionToken still in SignedHeaders: %s", auth)
+	}
+}
+
+// TestSignRequest_WithSessionToken verifies the STS-credential path:
+// X-Amz-Security-Token appears on the request, x-amz-security-token
+// appears in the canonical SignedHeaders list (alphabetically after
+// host and x-amz-date), and the resulting signature differs from the
+// no-token version with otherwise identical inputs. This is the
+// Lambda path — without it, Route53 rejects Lambda-exec-role creds.
+func TestSignRequest_WithSessionToken(t *testing.T) {
+	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
+	url := "https://route53.amazonaws.com/2013-04-01/hostedzone/Z1/rrset?name=x&type=A"
+
+	// Sign the same request twice — once without token, once with —
+	// and compare.
+	a, _ := http.NewRequest(http.MethodGet, url, nil)
+	signRequest(a, "AKIDEXAMPLE", "secret", "", "us-east-1", "route53", emptyPayloadHash, now)
+
+	b, _ := http.NewRequest(http.MethodGet, url, nil)
+	signRequest(b, "AKIDEXAMPLE", "secret", "STS-SESSION-TOKEN-FIXTURE", "us-east-1", "route53", emptyPayloadHash, now)
+
+	if b.Header.Get("X-Amz-Security-Token") != "STS-SESSION-TOKEN-FIXTURE" {
+		t.Errorf("X-Amz-Security-Token wrong: %q", b.Header.Get("X-Amz-Security-Token"))
+	}
+	authB := b.Header.Get("Authorization")
+	if !strings.Contains(authB, "SignedHeaders=host;x-amz-date;x-amz-security-token") {
+		t.Errorf("SignedHeaders missing token: %s", authB)
+	}
+
+	// Signatures must differ — if they matched, the token wasn't actually
+	// part of the canonical request and Route53 would reject the call.
+	if a.Header.Get("Authorization") == authB {
+		t.Error("signature identical with/without session token — canonical request is not incorporating the token")
 	}
 }

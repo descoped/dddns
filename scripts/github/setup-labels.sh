@@ -22,7 +22,7 @@ gh label create "cli"       --repo $REPO --description "CLI commands, flags, use
 gh label create "server"    --repo $REPO --description "Serve-mode HTTP handler (UniFi bridge)"                --color "0E8A16" --force 2>/dev/null || true
 gh label create "security"  --repo $REPO --description "Config encryption, auth, audit log, IAM"               --color "5319E7" --force 2>/dev/null || true
 gh label create "platform"  --repo $REPO --description "UDM/Pi/Linux/macOS/Windows specifics, wanip, profiles" --color "C5DEF5" --force 2>/dev/null || true
-gh label create "installer" --repo $REPO --description "Install scripts, GoReleaser, Makefile"                 --color "FEF2C0" --force 2>/dev/null || true
+gh label create "installer" --repo $REPO --description "Install scripts, GoReleaser, justfile"                 --color "FEF2C0" --force 2>/dev/null || true
 
 echo ""
 

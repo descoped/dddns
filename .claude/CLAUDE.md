@@ -148,12 +148,16 @@ secret_key: "xxxxxxxxxxxxxxxx"      # Optional if using AWS profile
 
 ### Local Development
 ```bash
-make build           # Current platform
-make build-udm       # UDM ARM64
-make build-all       # All platforms
-make test            # Run tests
-make install         # Install to /usr/local/bin
+just build           # Current platform
+just dev             # Race-detector build
+just test            # Run tests
+just install         # Install to /usr/local/bin
+just build-aws-lambda # Linux arm64 zip for AWS Lambda deployment
 ```
+Cross-platform release binaries (UDM arm64, Linux amd64/arm/arm64, macOS,
+Windows) are produced by GoReleaser on tag push — see
+`.github/workflows/goreleaser.yml`. For a one-off local cross-build, use
+`GOOS=... GOARCH=... go build .` directly.
 
 ### Release Process
 - Uses GoReleaser with git tags
@@ -246,7 +250,7 @@ curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-
 - `internal/profile/profile.go` - Platform detection
 - `internal/crypto/device_crypto.go` - Encryption implementation
 - `.goreleaser.yaml` - Release configuration
-- `Makefile` - Build automation
+- `justfile` - Build automation (run `just --list`)
 
 ## Common Issues & Solutions
 

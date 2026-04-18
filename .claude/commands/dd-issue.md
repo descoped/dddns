@@ -17,7 +17,7 @@ Repo: descoped/dddns
 | `server` | `cmd/serve.go`, `cmd/config_{set_mode,rotate_secret}.go`, `internal/{server,bootscript}` | Serve-mode HTTP handler, boot script generator |
 | `security` | `internal/config`, `internal/crypto`, `docs/aws-setup.md` | Config encryption, auth, audit log, IAM |
 | `platform` | `internal/{profile,wanip}` | UDM/Pi/Linux/macOS/Windows specifics, WAN IP lookup |
-| `installer` | `scripts/install-on-unifi-os.sh`, `.goreleaser.yaml`, `Makefile` | Install scripts, release plumbing |
+| `installer` | `scripts/install-on-unifi-os.sh`, `.goreleaser.yaml`, `justfile` | Install scripts, release plumbing |
 | `docs` | `docs/`, `ai_docs/`, `README.md` | User and design documentation |
 
 ## Phase 1: Determine Scope

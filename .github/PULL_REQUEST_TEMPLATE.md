@@ -19,7 +19,7 @@ Task: `.claude/issues/issue-X/task.md`
 - [ ] `server` — serve-mode HTTP handler
 - [ ] `security` — config encryption, auth, audit log, IAM
 - [ ] `platform` — UDM/Pi/Linux/macOS/Windows specifics
-- [ ] `installer` — install scripts, GoReleaser, Makefile
+- [ ] `installer` — install scripts, GoReleaser, justfile
 - [ ] `docs` — documentation only
 
 ## Changes

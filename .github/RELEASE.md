@@ -13,8 +13,8 @@ Releases are managed through git tags with automated binary building and GitHub 
 Before creating a release, ensure:
 
 - [ ] All intended changes are merged into the `main` branch
-- [ ] Tests are passing on the latest commit (`make test`)
-- [ ] Build succeeds for all platforms (`make build-all`)
+- [ ] Tests are passing on the latest commit (`just test`)
+- [ ] Build succeeds for the current platform (`just build`); cross-platform build happens in CI (GoReleaser)
 - [ ] Documentation is up to date
 - [ ] CHANGELOG or release notes are prepared
 

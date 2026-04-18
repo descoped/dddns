@@ -365,36 +365,38 @@ git clone https://github.com/descoped/dddns.git
 cd dddns
 
 # Build for current platform
-make build
+just build
 
-# Build for UDM
-make build-udm
-
-# Build for all platforms
-make build-all
-
-# Install locally
-sudo make install
+# Install locally (copies bin/dddns to /usr/local/bin)
+just install
 
 # Run tests
-make test
+just test
 ```
 
 ### Cross-Compilation
 
+Release artefacts for every supported OS/arch are produced by **GoReleaser**
+on every tag push (see `.github/workflows/goreleaser.yml`). For a one-off
+local build of a specific target, use `go build` directly with the
+standard `GOOS` / `GOARCH` env vars:
+
 ```bash
-# Build for UDM (ARM64)
+# UDM / UDR / Raspberry Pi (ARM64)
 GOOS=linux GOARCH=arm64 go build -o dddns-linux-arm64 .
 
-# Build for Linux AMD64
+# Linux AMD64
 GOOS=linux GOARCH=amd64 go build -o dddns-linux-amd64 .
 
-# Build for macOS Intel
-GOOS=darwin GOARCH=amd64 go build -o dddns-darwin-amd64 .
-
-# Build for macOS Apple Silicon
+# macOS Apple Silicon
 GOOS=darwin GOARCH=arm64 go build -o dddns-darwin-arm64 .
+
+# macOS Intel
+GOOS=darwin GOARCH=amd64 go build -o dddns-darwin-amd64 .
 ```
+
+To exercise the full GoReleaser matrix locally, install GoReleaser and
+run `goreleaser build --snapshot --clean`.
 
 ## Verification
 

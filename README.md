@@ -181,16 +181,17 @@ git clone https://github.com/descoped/dddns.git
 cd dddns
 
 # Build for current platform
-make build
+just build
 
-# Build for UDM/UDR
-make build-udm
+# Race build for local dev
+just dev
 
 # Run tests
-make test
+just test
 
-# Build all platforms
-make build-all
+# Cross-platform release binaries are produced by GoReleaser on every
+# tag push — see .github/workflows/goreleaser.yml. To exercise it
+# locally, install goreleaser and run `goreleaser build --snapshot`.
 ```
 
 ### Project Structure
@@ -275,7 +276,7 @@ We welcome contributions! Whether it's bug fixes, new features, or documentation
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Run tests (`make test`)
+4. Run tests (`just test`)
 5. Commit your changes (`git commit -m 'feat: add amazing feature'`)
 6. Push to your branch (`git push origin feature/amazing-feature`)
 7. Open a Pull Request

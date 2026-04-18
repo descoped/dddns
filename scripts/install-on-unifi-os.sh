@@ -5,7 +5,13 @@
 #
 # Usage:
 #   curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh | bash
-#   ./install-on-unifi-os.sh [--mode cron|serve] [--force] [--uninstall] [--rollback]
+#   ./install-on-unifi-os.sh [--mode cron|serve] [--version <tag>] [--force] [--uninstall] [--rollback]
+#
+# Version selection:
+#   Without --version, the latest non-prerelease tag is used. Pre-release tags
+#   (e.g. v0.2.0-rc.1) are excluded by GitHub's /releases/latest endpoint, so
+#   testing a release candidate requires --version v0.2.0-rc.1 (or the
+#   DDDNS_VERSION env var).
 #
 # Modes are mutually exclusive:
 #   cron  — /etc/cron.d/dddns runs `dddns update` every 30 minutes (default).
@@ -153,6 +159,21 @@ get_latest_version() {
         exit 1
     fi
     echo "$version"
+}
+
+# Verify a given tag exists as a GitHub release (including prereleases).
+# Used when the caller passes --version / $DDDNS_VERSION so we fail fast
+# with a readable error instead of a confusing 404 during download.
+verify_release_tag() {
+    local tag="$1"
+    local http_code
+    http_code=$(curl -s -o /dev/null -w '%{http_code}' \
+        "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}")
+    if [[ "$http_code" != "200" ]]; then
+        log_error "Release tag '${tag}' not found on GitHub (HTTP ${http_code})"
+        log_error "  See https://github.com/${GITHUB_REPO}/releases for the full list."
+        exit 1
+    fi
 }
 
 # Downloads the release tarball + checksums.txt, verifies SHA-256, extracts
@@ -497,8 +518,12 @@ Options:
   --mode cron|serve   Install or switch to the specified mode. Default:
                       preserve current mode on upgrade; prompt on fresh
                       install.
+  --version <tag>     Install a specific release tag (e.g. v0.2.0-rc.1).
+                      Required to install a pre-release — GitHub's "latest"
+                      endpoint skips those. Also settable via the
+                      DDDNS_VERSION env var.
   --force             Reinstall the binary even if the current version
-                      matches the latest release.
+                      matches the target release.
   --uninstall         Remove dddns. Preserves configuration.
   --rollback          Restore the previous binary + boot script + cron
                       entry from the .prev snapshots written by the last
@@ -515,6 +540,7 @@ main() {
     local action="install"
     local force="false"
     local mode=""
+    local requested_version="${DDDNS_VERSION:-}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -528,6 +554,13 @@ main() {
                 shift
                 ;;
             --mode=*)    mode="${1#*=}"; shift ;;
+            --version)
+                shift
+                [[ $# -eq 0 ]] && { log_error "--version requires a tag argument"; exit 1; }
+                requested_version="$1"
+                shift
+                ;;
+            --version=*) requested_version="${1#*=}"; shift ;;
             --help)      usage; exit 0 ;;
             *)           log_error "Unknown option: $1"; usage; exit 1 ;;
         esac
@@ -603,10 +636,16 @@ main() {
 
     ensure_on_boot_hook
 
-    log_info "Fetching latest release tag..."
     local version
-    version=$(get_latest_version)
-    log_info "Latest release: ${version}"
+    if [[ -n "$requested_version" ]]; then
+        log_info "Using requested release: ${requested_version}"
+        verify_release_tag "$requested_version"
+        version="$requested_version"
+    else
+        log_info "Fetching latest release tag..."
+        version=$(get_latest_version)
+        log_info "Latest release: ${version}"
+    fi
 
     # Short-circuit the expensive path if we're already on the latest and
     # the user didn't force reinstall. Only applies to existing installs.

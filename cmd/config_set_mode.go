@@ -58,7 +58,14 @@ func runSetMode(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	script, err := bootscript.Generate(bootscript.DefaultUnifiParams(mode))
+	// Start from the UniFi defaults, then overlay any user-supplied values
+	// from config — cfg.UpdateInterval is the only one exposed today; the
+	// others remain baked defaults (paths are platform-specific, not
+	// user-tunable).
+	params := bootscript.DefaultUnifiParams(mode)
+	params.UpdateInterval = cfg.UpdateIntervalOrDefault()
+
+	script, err := bootscript.Generate(params)
 	if err != nil {
 		return err
 	}

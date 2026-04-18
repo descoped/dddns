@@ -27,7 +27,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 
 	"github.com/descoped/dddns/internal/dns"
@@ -37,15 +36,14 @@ import (
 // these come from the Lambda function's env vars — set via
 // terraform/opentofu at deploy time, never from a config file.
 type config struct {
-	region          string // AWS_REGION — provided by Lambda
-	accessKey       string // AWS_ACCESS_KEY_ID — STS creds from exec role
-	secretKey       string // AWS_SECRET_ACCESS_KEY — ditto
-	sessionToken    string // AWS_SESSION_TOKEN — ditto
-	hostedZoneID    string // HOSTED_ZONE_ID — Route53 zone to UPSERT into
-	hostname        string // DDDNS_HOSTNAME — record name the handler accepts
-	ssmSecretParam  string // SSM_SECRET_PARAM — SSM name holding the shared secret
-	ttl             int64  // DDDNS_TTL — DNS TTL seconds (default 300)
-	lookupTimeout   time.Duration
+	region         string // AWS_REGION — provided by Lambda
+	accessKey      string // AWS_ACCESS_KEY_ID — STS creds from exec role
+	secretKey      string // AWS_SECRET_ACCESS_KEY — ditto
+	sessionToken   string // AWS_SESSION_TOKEN — ditto
+	hostedZoneID   string // HOSTED_ZONE_ID — Route53 zone to UPSERT into
+	hostname       string // DDDNS_HOSTNAME — record name the handler accepts
+	ssmSecretParam string // SSM_SECRET_PARAM — SSM name holding the shared secret
+	ttl            int64  // DDDNS_TTL — DNS TTL seconds (default 300)
 }
 
 func loadConfig() (*config, error) {
@@ -108,7 +106,6 @@ func loadConfig() (*config, error) {
 		hostname:       host,
 		ssmSecretParam: ssmParam,
 		ttl:            ttl,
-		lookupTimeout:  5 * time.Second,
 	}, nil
 }
 
@@ -143,12 +140,4 @@ func main() {
 		secretCache: &secretCache{ttl: 60 * time.Second, now: time.Now},
 	}
 	lambda.Start(h.handle)
-}
-
-// invoke is a helper that lets tests drive handler.handle with a
-// pre-built APIGatewayV2HTTPRequest. Kept in main.go so the bench /
-// local debugging harness can exercise it without spinning up the
-// full lambda.Start loop.
-func invoke(ctx context.Context, h *handler, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	return h.handle(ctx, req)
 }

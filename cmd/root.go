@@ -55,6 +55,16 @@ func checkConfigPermissions(path string) error {
 	return nil
 }
 
+// fatalf writes a formatted error message to stderr and exits non-zero.
+// Used during config initialization (cobra.OnInitialize) where cobra
+// has not yet taken over execution and has no error-return hook we can
+// wire into — os.Exit is the only way to surface the failure before
+// a command's RunE runs.
+func fatalf(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
 // initConfig resolves the config file path and records it with
 // config.SetActivePath so config.Load can pick it up later.
 //
@@ -74,26 +84,22 @@ func initConfig() {
 
 		securePath, err := p.GetSecurePath()
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "Error resolving secure config path: %v\n", err)
-			os.Exit(1)
+			fatalf("Error resolving secure config path: %v", err)
 		}
 		if _, err := os.Stat(securePath); err == nil {
 			resolved = securePath
 		} else if !errors.Is(err, os.ErrNotExist) {
-			_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-			os.Exit(1)
+			fatalf("Error reading config file: %v", err)
 		} else {
 			dataDir, err := p.GetDataDir()
 			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Error resolving data directory: %v\n", err)
-				os.Exit(1)
+				fatalf("Error resolving data directory: %v", err)
 			}
 			yamlPath := filepath.Join(dataDir, "config.yaml")
 			if _, err := os.Stat(yamlPath); err == nil {
 				resolved = yamlPath
 			} else if !errors.Is(err, os.ErrNotExist) {
-				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-				os.Exit(1)
+				fatalf("Error reading config file: %v", err)
 			}
 			// If yamlPath also missing, resolved stays "" — Load()
 			// will return defaults and Validate() will surface the
@@ -104,8 +110,7 @@ func initConfig() {
 	// Flag-supplied path must exist (stat fatal on any error).
 	if cfgFile != "" {
 		if _, err := os.Stat(cfgFile); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "Error: config file not found: %v\n", err)
-			os.Exit(1)
+			fatalf("Error: config file not found: %v", err)
 		}
 	}
 
@@ -114,8 +119,7 @@ func initConfig() {
 
 	if resolved != "" {
 		if err := checkConfigPermissions(resolved); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "Security warning: %v\n", err)
-			os.Exit(1)
+			fatalf("Security warning: %v", err)
 		}
 		// Eagerly parse plaintext YAML so a malformed file fails
 		// fast with a clear "Error reading config file" message
@@ -125,13 +129,11 @@ func initConfig() {
 		if !strings.HasSuffix(resolved, ".secure") {
 			data, err := os.ReadFile(resolved)
 			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-				os.Exit(1)
+				fatalf("Error reading config file: %v", err)
 			}
 			var probe map[string]interface{}
 			if err := yaml.Unmarshal(data, &probe); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
-				os.Exit(1)
+				fatalf("Error reading config file: %v", err)
 			}
 		}
 	}

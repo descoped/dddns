@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,7 +188,15 @@ func promptConfig(reader *bufio.Reader, existing *config.Config) (*config.Config
 	}
 	ttl := defaultTTL
 	if ttlStr != "" {
-		_, _ = fmt.Sscanf(ttlStr, "%d", &ttl)
+		parsed, parseErr := strconv.ParseInt(ttlStr, 10, 64)
+		switch {
+		case parseErr != nil:
+			fmt.Printf("  (ignored: %q is not a number; keeping %d)\n", ttlStr, defaultTTL)
+		case parsed <= 0:
+			fmt.Printf("  (ignored: TTL must be positive; keeping %d)\n", defaultTTL)
+		default:
+			ttl = parsed
+		}
 	}
 
 	defaultCache := cur.IPCacheFile

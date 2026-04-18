@@ -21,14 +21,17 @@ type Params struct {
 	UpdateInterval string // crontab schedule; e.g. "*/30 * * * *"
 }
 
-// DefaultUnifiParams returns the production defaults for a UniFi install.
+// DefaultUnifiParams returns the path defaults for a UniFi install.
+// UpdateInterval is intentionally left blank — the caller is responsible
+// for populating it (typically via config.UpdateIntervalOrDefault). This
+// keeps the cron schedule's source of truth in the config package rather
+// than duplicating the string literal here.
 func DefaultUnifiParams(mode string) Params {
 	return Params{
-		Mode:           mode,
-		BinaryPath:     "/data/dddns/dddns",
-		ConfigDir:      "/data/.dddns",
-		CronEntryPath:  "/etc/cron.d/dddns",
-		UpdateInterval: "*/30 * * * *",
+		Mode:          mode,
+		BinaryPath:    "/data/dddns/dddns",
+		ConfigDir:     "/data/.dddns",
+		CronEntryPath: "/etc/cron.d/dddns",
 	}
 }
 
@@ -38,6 +41,9 @@ func DefaultUnifiParams(mode string) Params {
 func Generate(p Params) (string, error) {
 	switch p.Mode {
 	case "cron":
+		if p.UpdateInterval == "" {
+			return "", fmt.Errorf("cron mode requires a non-empty UpdateInterval — caller should populate from config")
+		}
 		return renderCron(p), nil
 	case "serve":
 		return renderServe(p), nil

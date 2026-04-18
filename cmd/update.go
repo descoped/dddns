@@ -22,10 +22,6 @@ var (
 	verbose     bool
 )
 
-// updateTimeout is the maximum wall-clock time an `update` run may take.
-// Bounds Route53 hangs so cron doesn't accumulate stuck processes.
-const updateTimeout = 30 * time.Second
-
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Update Route53 DNS record with current public IP",
@@ -57,10 +53,11 @@ func runUpdate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Cancel on SIGINT/SIGTERM; bound total runtime.
+	// Cancel on SIGINT/SIGTERM; bound total runtime to cfg.UpdateTimeout
+	// (defaults to 30 s — raise in config for slow networks).
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	ctx, cancel := context.WithTimeout(ctx, cfg.UpdateTimeoutOrDefault())
 	defer cancel()
 
 	// --verbose overrides --quiet so operators can flip on diagnostic output

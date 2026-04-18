@@ -19,28 +19,15 @@ import (
 // stubRoute53 records the IPs it was asked to publish. Mirrors the
 // dnsClient interface exactly so it drops into handler.route53.
 type stubRoute53 struct {
-	mu      sync.Mutex
-	pushed  []string
-	failErr error
+	mu     sync.Mutex
+	pushed []string
 }
 
 func (s *stubRoute53) UpdateIP(_ context.Context, ip string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.failErr != nil {
-		return s.failErr
-	}
 	s.pushed = append(s.pushed, ip)
 	return nil
-}
-
-func (s *stubRoute53) last() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.pushed) == 0 {
-		return ""
-	}
-	return s.pushed[len(s.pushed)-1]
 }
 
 // Fixtures — all use RFC 5737 TEST-NET-3 addresses and RFC 2606
@@ -56,7 +43,7 @@ const (
 // httptest server standing in for SSM. The Route53 stub accepts any
 // UpdateIP call and records the IP; the SSM stub returns testSecret
 // as the parameter value. Tests can override the SSM behaviour.
-func newTestHandler(t *testing.T, ssmHandler http.HandlerFunc) (*handler, *stubRoute53) {
+func newTestHandler(t *testing.T, ssmHandler http.HandlerFunc) *handler {
 	t.Helper()
 
 	if ssmHandler == nil {
@@ -74,7 +61,6 @@ func newTestHandler(t *testing.T, ssmHandler http.HandlerFunc) (*handler, *stubR
 		hostname:       testHostname,
 		ssmSecretParam: "/dddns/test/shared_secret",
 		ttl:            300,
-		lookupTimeout:  5 * time.Second,
 	}
 
 	r53 := &stubRoute53{}
@@ -93,7 +79,7 @@ func newTestHandler(t *testing.T, ssmHandler http.HandlerFunc) (*handler, *stubR
 		route53:     r53,
 		ssm:         ssm,
 		secretCache: &secretCache{ttl: time.Minute, now: time.Now},
-	}, r53
+	}
 }
 
 func defaultSSMStub(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +122,7 @@ func basicAuth(user, pass string) string {
 }
 
 func TestHandler_HappyPath_PublishesSourceIP(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, err := h.handle(context.Background(), mkRequest(basicAuth("dddns", testSecret), testHostname, testSourceIP))
 	if err != nil {
@@ -151,7 +137,7 @@ func TestHandler_HappyPath_PublishesSourceIP(t *testing.T) {
 }
 
 func TestHandler_WrongSecret_Badauth(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest(basicAuth("dddns", "wrong-secret"), testHostname, testSourceIP))
 	if got := strings.TrimSpace(resp.Body); got != "badauth" {
@@ -160,7 +146,7 @@ func TestHandler_WrongSecret_Badauth(t *testing.T) {
 }
 
 func TestHandler_MissingAuth_Badauth(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest("", testHostname, testSourceIP))
 	if got := strings.TrimSpace(resp.Body); got != "badauth" {
@@ -169,7 +155,7 @@ func TestHandler_MissingAuth_Badauth(t *testing.T) {
 }
 
 func TestHandler_MalformedAuth_Badauth(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	// Not Base64, not colon-separated.
 	resp, _ := h.handle(context.Background(), mkRequest("Basic garbage!!", testHostname, testSourceIP))
@@ -179,7 +165,7 @@ func TestHandler_MalformedAuth_Badauth(t *testing.T) {
 }
 
 func TestHandler_WrongHostname_Nohost(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest(basicAuth("dddns", testSecret), "other.example.com", testSourceIP))
 	if got := strings.TrimSpace(resp.Body); got != "nohost" {
@@ -188,7 +174,7 @@ func TestHandler_WrongHostname_Nohost(t *testing.T) {
 }
 
 func TestHandler_HostnameCaseInsensitive(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest(basicAuth("dddns", testSecret), strings.ToUpper(testHostname), testSourceIP))
 	if got := strings.TrimSpace(resp.Body); got != "good "+testSourceIP {
@@ -197,7 +183,7 @@ func TestHandler_HostnameCaseInsensitive(t *testing.T) {
 }
 
 func TestHandler_EmptyHostname_Notfqdn(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest(basicAuth("dddns", testSecret), "", testSourceIP))
 	if got := strings.TrimSpace(resp.Body); got != "notfqdn" {
@@ -206,7 +192,7 @@ func TestHandler_EmptyHostname_Notfqdn(t *testing.T) {
 }
 
 func TestHandler_MissingSourceIP_Dnserr(t *testing.T) {
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	// No sourceIP set. Under real API Gateway this can't happen; tests
 	// verify the fail-closed branch fires when it somehow does.
@@ -221,7 +207,7 @@ func TestHandler_MyipParamIgnored(t *testing.T) {
 	// (RFC 5737 TEST-NET-2) but the handler MUST publish SourceIP
 	// (203.0.113.42, TEST-NET-3) instead. If it ever publishes the
 	// myip value, the body won't match.
-	h, _ := newTestHandler(t, nil)
+	h := newTestHandler(t, nil)
 
 	resp, _ := h.handle(context.Background(), mkRequest(basicAuth("dddns", testSecret), testHostname, testSourceIP))
 	body := strings.TrimSpace(resp.Body)
@@ -242,7 +228,7 @@ func TestSecretCache_SingleRoundTrip(t *testing.T) {
 		calls++
 		defaultSSMStub(w, r)
 	}
-	h, _ := newTestHandler(t, ssmHandler)
+	h := newTestHandler(t, ssmHandler)
 
 	req := mkRequest(basicAuth("dddns", testSecret), testHostname, testSourceIP)
 

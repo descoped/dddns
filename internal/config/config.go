@@ -7,11 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/descoped/dddns/internal/constants"
 	"github.com/descoped/dddns/internal/profile"
 	"go.yaml.in/yaml/v3"
 )
+
+// DefaultUpdateInterval is the crontab schedule written by `dddns config
+// set-mode cron` when cfg.UpdateInterval is unset. 30 minutes is the same
+// cadence UniFi's own inadyn uses by default.
+const DefaultUpdateInterval = "*/30 * * * *"
+
+// DefaultUpdateTimeout bounds a single `dddns update` run when
+// cfg.UpdateTimeout is unset. 30 s is comfortable on a home connection;
+// users on slower networks can raise it in config without recompiling.
+const DefaultUpdateTimeout = 30 * time.Second
 
 // Config holds all configuration for dddns.
 type Config struct {
@@ -34,10 +45,47 @@ type Config struct {
 	// reads the local interface regardless of this setting.
 	IPSource string `yaml:"ip_source,omitempty"`
 
+	// UpdateInterval overrides the crontab schedule written by
+	// `dddns config set-mode cron`. Five-field crontab syntax.
+	// Empty defaults to DefaultUpdateInterval ("*/30 * * * *").
+	// Only consumed by the cron-mode bootscript generator; serve and
+	// Lambda modes ignore it.
+	UpdateInterval string `yaml:"update_interval,omitempty"`
+
+	// UpdateTimeout bounds a single `dddns update` run's wall-clock
+	// time. Go duration syntax ("30s", "2m", "500ms"). Empty defaults
+	// to DefaultUpdateTimeout (30 s). Raise this if Route53 round-trips
+	// on your network routinely approach 30 s.
+	UpdateTimeout string `yaml:"update_timeout,omitempty"`
+
 	// Server holds parameters for serve mode (dddns serve). nil when the
 	// `server:` block is absent from the config file, which disables serve
 	// mode. See ServerConfig for fields.
 	Server *ServerConfig `yaml:"server,omitempty"`
+}
+
+// UpdateIntervalOrDefault returns cfg.UpdateInterval if set, otherwise
+// DefaultUpdateInterval. Always returns a non-empty crontab schedule.
+func (c *Config) UpdateIntervalOrDefault() string {
+	if c.UpdateInterval != "" {
+		return c.UpdateInterval
+	}
+	return DefaultUpdateInterval
+}
+
+// UpdateTimeoutOrDefault returns the parsed duration from
+// cfg.UpdateTimeout, or DefaultUpdateTimeout when the field is unset or
+// malformed. Malformed values are tolerated silently here — Validate()
+// is responsible for surfacing parse errors at config-check time.
+func (c *Config) UpdateTimeoutOrDefault() time.Duration {
+	if c.UpdateTimeout == "" {
+		return DefaultUpdateTimeout
+	}
+	d, err := time.ParseDuration(c.UpdateTimeout)
+	if err != nil || d <= 0 {
+		return DefaultUpdateTimeout
+	}
+	return d
 }
 
 // ServerConfig holds parameters for serve mode (dddns serve).
@@ -161,6 +209,19 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("ip_source %q must be one of: auto, local, remote", c.IPSource)
 	}
+	if c.UpdateTimeout != "" {
+		d, err := time.ParseDuration(c.UpdateTimeout)
+		if err != nil {
+			return fmt.Errorf("update_timeout %q is not a valid duration (e.g. \"30s\", \"2m\"): %w", c.UpdateTimeout, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("update_timeout %q must be positive", c.UpdateTimeout)
+		}
+	}
+	// UpdateInterval has crontab syntax; full validation would pull in a
+	// cron parser. Skip here — a malformed schedule surfaces immediately
+	// when cron (re)loads the file on the target host, which is a faster
+	// feedback loop than a parser in dddns would give.
 	return nil
 }
 

@@ -6,7 +6,9 @@ import (
 )
 
 func TestGenerate_Cron(t *testing.T) {
-	out, err := Generate(DefaultUnifiParams("cron"))
+	p := DefaultUnifiParams("cron")
+	p.UpdateInterval = "*/30 * * * *"
+	out, err := Generate(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +85,29 @@ func TestGenerate_InvalidMode(t *testing.T) {
 // produce the same script and therefore no diff on disk.
 func TestGenerate_Idempotent(t *testing.T) {
 	for _, mode := range []string{"cron", "serve"} {
-		a, _ := Generate(DefaultUnifiParams(mode))
-		b, _ := Generate(DefaultUnifiParams(mode))
+		p := DefaultUnifiParams(mode)
+		if mode == "cron" {
+			p.UpdateInterval = "*/30 * * * *"
+		}
+		a, _ := Generate(p)
+		b, _ := Generate(p)
 		if a != b {
 			t.Errorf("Generate(%q) is not idempotent", mode)
 		}
+	}
+}
+
+// TestGenerate_Cron_RequiresInterval guards the contract that
+// DefaultUnifiParams leaves UpdateInterval blank and callers must fill it.
+// Prevents a silent regression where a future refactor bakes the schedule
+// back into the defaults.
+func TestGenerate_Cron_RequiresInterval(t *testing.T) {
+	p := DefaultUnifiParams("cron")
+	if p.UpdateInterval != "" {
+		t.Fatalf("DefaultUnifiParams should leave UpdateInterval empty, got %q", p.UpdateInterval)
+	}
+	if _, err := Generate(p); err == nil {
+		t.Error("expected Generate to reject cron mode with empty UpdateInterval")
 	}
 }
 

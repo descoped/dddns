@@ -1,0 +1,33 @@
+# golangci-lint configuration for dddns.
+#
+# The project's CI pipeline + local `just lint` + the `just check` recipe
+# all honour this file. Its purpose is to silence unactionable noise
+# from errcheck — writes to stdout/stderr via `fmt.F*` essentially can't
+# fail in a way a caller can handle, and `defer x.Close()` in tests is
+# idiomatic Go. Without these excludes, every production command that
+# prints a result line would need a cluttering `_, _ =` prefix.
+#
+# Real errcheck findings (ignored errors from actual I/O, AWS calls,
+# file ops) remain enabled and will still fail the lint gate.
+
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    rules:
+      # fmt writes to stdout/stderr have no actionable failure mode.
+      # Covers fmt.Fprintln, Fprintf, Fprint, Println, Printf.
+      - linters: [errcheck]
+        text: "Error return value of .fmt\\.(F?print[fln]*). is not checked"
+
+      # Test files: defer f.Close() / defer resp.Body.Close() is the
+      # canonical Go idiom — don't force noisy wrappers.
+      - path: _test\.go
+        linters: [errcheck]
+        text: "Error return value of .+\\.Close. is not checked"

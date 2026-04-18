@@ -34,13 +34,6 @@
       "automergeType": "pr"
     },
     {
-      "description": "Group AWS SDK updates",
-      "groupName": "AWS SDK",
-      "matchPackageNames": [
-        "/^github.com/aws/aws-sdk-go/"
-      ]
-    },
-    {
       "description": "Group GitHub Actions updates",
       "matchManagers": [
         "github-actions"
@@ -48,6 +41,14 @@
       "groupName": "GitHub Actions",
       "automerge": true,
       "automergeType": "pr"
+    },
+    {
+      "description": "Group cobra + pflag (pflag bumps without cobra often break source compat)",
+      "groupName": "cobra / pflag",
+      "matchPackageNames": [
+        "github.com/spf13/cobra",
+        "github.com/spf13/pflag"
+      ]
     },
     {
       "description": "Require approval for major Go version updates",
@@ -61,13 +62,6 @@
         "major"
       ],
       "automerge": false
-    },
-    {
-      "description": "Group test dependencies",
-      "groupName": "Test dependencies",
-      "matchPackageNames": [
-        "/^github.com/stretchr/testify/"
-      ]
     }
   ],
   "prConcurrentLimit": 3,

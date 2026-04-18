@@ -112,6 +112,19 @@ vexec() {
     fi
 }
 
+# invocation_hint returns a re-runnable command line for the user. When
+# the script is invoked via `bash <(curl ...)`, $0 resolves to /dev/fd/63
+# which is useless as a suggestion; fall back to the canonical curl-pipe
+# form so "To revert: X" is always copy-pasteable.
+invocation_hint() {
+    local suffix="$1"
+    if [[ "$0" == /dev/fd/* ]] || [[ "$0" == "bash" ]]; then
+        echo "bash <(curl -fsL https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install-on-unifi-os.sh) ${suffix}"
+    else
+        echo "$(basename "$0") ${suffix}"
+    fi
+}
+
 # print_banner draws a ==== heading with the given title. Used for the
 # installer's start banner and the success block so both stay in sync.
 print_banner() {
@@ -1027,7 +1040,7 @@ rollback_action() {
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [options]
+Usage: $(invocation_hint "[options]")
 
 Options:
   --mode cron|serve   Install or switch to the specified mode. Default:
@@ -1228,7 +1241,7 @@ print_success() {
     fi
     log_info "Previous state preserved for rollback:"
     log_info "  ${INSTALL_DIR}/${BINARY_NAME}${PREV_SUFFIX}"
-    log_info "To revert: $(basename "$0") --rollback"
+    log_info "To revert: $(invocation_hint --rollback)"
     echo ""
 
     if [[ "$is_upgrade" != "true" ]]; then

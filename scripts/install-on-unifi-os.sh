@@ -52,6 +52,11 @@ readonly BOOT_SCRIPT="${BOOT_SCRIPT_DIR}/${BOOT_SCRIPT_NAME}"
 readonly CRON_FILE="/etc/cron.d/dddns"
 readonly LOG_FILE="/var/log/dddns.log"
 readonly SYSTEMD_UNIT="/etc/systemd/system/dddns.service"
+# PREV_SUFFIX must NOT end in ".sh" — UniFi's udm-boot loader globs
+# /data/on_boot.d/*.sh to decide what runs on every boot. A suffix that
+# ends in .sh would make our backup boot script execute alongside the
+# live one, with consequences ranging from idempotent no-ops to mode
+# flapping. Keep the suffix neutral.
 readonly PREV_SUFFIX=".prev"
 
 # Files snapshotted by save_state and restored by rollback_state. Adding a

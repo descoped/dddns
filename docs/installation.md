@@ -70,6 +70,13 @@ bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/i
 bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
   --rollback
 
+# Disable — stop the update loop, but keep the binary, config, and
+# symlink on disk. Useful when migrating to an AWS Lambda deployment
+# and wanting to preserve the option to fall back quickly. Subsequent
+# installer runs upgrade the binary only; pass --mode to re-enable.
+bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
+  --disable
+
 # Uninstall (preserves /data/.dddns so reinstalling keeps your config)
 bash <(curl -fsL https://raw.githubusercontent.com/descoped/dddns/main/scripts/install-on-unifi-os.sh) \
   --uninstall

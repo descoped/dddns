@@ -2,11 +2,25 @@
 
 Welcome to the dddns documentation! This guide will help you install, configure, and use dddns to automatically update your AWS Route53 DNS records with your dynamic IP address.
 
+## What's New in v0.3.0
+
+- **AWS Lambda deployment form** — run dddns behind an API Gateway HTTPS endpoint instead of (or alongside) the on-device cron / serve modes. The right fit when UniFi UI's Custom Dynamic DNS is the push source and you don't want to run anything on the router. Full OpenTofu module + rotate-secret helper at `deploy/aws-lambda/`. Household-scale deployments stay in the AWS free tier.
+- **SigV4 session-token support** — the hand-rolled SigV4 signer now handles STS temporary credentials (what Lambda's execution role hands out). Cron / serve paths using long-lived IAM keys are byte-identical to v0.2.x.
+- **Installer `--disable`** — soft-stop action that retires the update loop (boot script + cron + systemd unit) while leaving the binary, config, and symlink in place. Designed for migrating the DDNS role to the Lambda form while preserving the ability to fall back quickly. Subsequent installer runs upgrade the binary only; pass `--mode` explicitly to re-activate a scheduler.
+- **justfile replaces Makefile** — `just build`, `just test`, `just build-aws-lambda`, etc. Run `just --list` for the full menu.
+
+## What's New in v0.2.1
+
+- **Probe upgrades** — `--probe` now reports firmware version plus upstream connectivity (GitHub releases, checkip.amazonaws.com, Route53 API, GitHub API) in a `[connectivity]` section. Still privacy-safe by design.
+- **`dddns update --verbose`** — per-step diagnostic output (IP source resolution). Overrides `--quiet`.
+- **Cron output to journald** — cron mode pipes through `logger -t dddns` to systemd-journald instead of `/var/log/dddns.log`. Journald handles rotation. Legacy flat file flagged `legacy — safe to delete` by the probe.
+- **Docs** — new "Where do my logs live?" section in [Troubleshooting](troubleshooting.md).
+
 ## What's New in v0.2.0
 
-- **Serve mode (UniFi)** — event-driven updates via UniFi's built-in `inadyn` push, triggered the instant your WAN IP changes. Alternative to cron polling. See the [UDM Guide](udm-guide.md) and [Quick Start](quick-start.md).
+- **Serve mode (same-host bind)** — event-driven updates for a same-host DDNS client. Alternative to cron polling. **Experimental on UniFi Dream** — UniFi's built-in `inadyn` binds with `-b eth4` and can't reach a loopback listener; use cron or the Lambda form there. See the [UDM Guide](udm-guide.md) and [Quick Start](quick-start.md).
 - **Stdlib-only binary** — AWS SDK retired in favour of a hand-rolled Route53 REST client and SigV4 signer. Stripped ARM64 binary is ~7.8 MB (down from 16 MB); only direct dependencies are `cobra` and `yaml.v3`.
-- **Hardened UniFi installer** — three safety gates (pre-flight, state snapshot, post-install smoke) plus `--probe`, `--version`, `--verbose`, `--rollback`, and `--uninstall`. See [Installation Guide](installation.md).
+- **Hardened UniFi installer** — three safety gates (pre-flight, state snapshot, post-install smoke) plus `--probe`, `--version`, `--verbose`, `--rollback`, `--disable`, and `--uninstall`. See [Installation Guide](installation.md).
 - **New commands** — `dddns serve` / `serve status` / `serve test`, `dddns config set-mode {cron|serve}`, `dddns config rotate-secret`. See [Command Reference](commands.md).
 - **Stricter config permissions** — `config.yaml` is now refused at load time unless it's `chmod 600`. See [Configuration Guide](configuration.md).
 - **WAN IP auto-detect fallback** — on devices with policy-based routing (e.g. UDR7), dddns now scans up interfaces when the main routing table has no default. See [Troubleshooting](troubleshooting.md).

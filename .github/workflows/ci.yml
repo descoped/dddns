@@ -65,7 +65,10 @@ jobs:
           # is protected. Add CODECOV_TOKEN as a repo secret at
           # Settings → Secrets and variables → Actions.
           token: ${{ secrets.CODECOV_TOKEN }}
-        continue-on-error: true
+          # Fail the job on upload error so a silent drop (bad token,
+          # Codecov outage, rate limit) is visible immediately instead
+          # of quietly leaving the badge stale for weeks.
+          fail_ci_if_error: true
 
   lint:
     name: Lint

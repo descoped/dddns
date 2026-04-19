@@ -171,38 +171,95 @@ dddns --version                                # Show version
 
 ## How It Works
 
+dddns has three deployment forms. Pick one at install time; they are mutually exclusive.
+
+| Form | Trigger | Where dddns runs | Fits when |
+|---|---|---|---|
+| **Cron** | Time-based (every N minutes) | On-device (UniFi, Pi, Linux, macOS) | Simple, self-contained. Default choice for most installs. |
+| **Serve** | Event-based (dyndns v2 push) | On-device, listens on 127.0.0.1 | A same-host DDNS client pushes on IP change. **Experimental on UniFi Dream** — see note below. |
+| **Lambda** | Event-based (HTTPS push) | AWS Lambda + API Gateway | Push source cannot reach a loopback listener (e.g. UniFi UI's built-in `inadyn` with `-b eth4`). Also the right choice when the router itself is unreliable. |
+
+### Cron mode (polling)
+
 ```mermaid
 flowchart LR
-    A[Cron Job<br/>Every 30 min]:::start
-    A -.-> B
+    A[Cron<br/>*/30 min]:::start -.-> B[dddns update]
+    B --> C{WAN IP<br/>changed?}
+    C -->|cache hit| G[nochg-cache]:::skip
+    C -->|changed| F[Route53 GET<br/>current A]
+    F --> H{DNS<br/>matches?}
+    H -->|yes| J[nochg-dns]:::skip
+    H -->|no| I[Route53 UPSERT]:::update
+    I --> K[cache + journald]
+    G --> L[exit]:::exit
+    J --> L
+    K --> L
 
-    subgraph " "
-        direction LR
-        B[dddns update] --> C{Check IP}
-        C --> D[Get IP]
-        D --> E{Compare<br/>Cache}
-        E -->|Changed| F[Query<br/>Route53]
-        E -->|Same| G[Skip]
-        F --> H{Need<br/>Update?}
-        H -->|Yes| I[Update<br/>DNS]:::update
-        H -->|No| G
-        I --> J[Cache &<br/>Log]
-    end
-
-    J --> L[Exit]:::exit
-    G --> L
-
-    A ~~~ B
-    J ~~~ L
-
-    classDef start fill:#f9f,stroke:#333,stroke-width:2px
-    classDef update fill:#9f9,stroke:#333,stroke-width:2px
-    classDef exit fill:#ff9,stroke:#333,stroke-width:2px
+    classDef start fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef update fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef skip fill:#fff9c4,stroke:#fbc02d
+    classDef exit fill:#f5f5f5,stroke:#616161
 ```
 
-The flow ensures minimal API calls and only updates DNS when necessary, making it efficient and ISP-friendly.
+Two short-circuits — cache match and DNS match — keep API calls near-zero when the IP is stable.
 
-> **💡 Cost Tip**: Running your own dynamic DNS with AWS Route53 costs approximately USD 0.50 per month for a hosted zone. This makes dddns a very affordable solution for reliable home network access.
+### Serve mode (event-driven, on-device)
+
+```mermaid
+flowchart LR
+    A[DDNS client<br/>same host]:::start -.->|dyndns v2 push| B[dddns serve<br/>127.0.0.1:53353]
+    B --> C{CIDR<br/>allowlist}
+    C -->|deny| X[403]:::deny
+    C -->|allow| D{Constant-time<br/>Basic Auth}
+    D -->|fail| Y[badauth]:::deny
+    D -->|ok| E{Hostname<br/>match?}
+    E -->|no| Z[nohost]:::deny
+    E -->|yes| F[Read WAN IP<br/>from local iface]
+    F --> G[Route53 UPSERT]:::update
+    G --> H[audit.jsonl +<br/>status.json]
+    H --> I[good]:::exit
+
+    classDef start fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef update fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef deny fill:#ffcdd2,stroke:#c62828
+    classDef exit fill:#fff9c4,stroke:#fbc02d
+```
+
+The handler **never trusts the `myip` query parameter** — it publishes the WAN interface's actual IP (ground truth). Systemd supervises the process with `Restart=always`.
+
+> ⚠️ **Experimental on UniFi Dream (UDM / UDR)**: UniFi's built-in `inadyn` binds with `-b eth4`, which forces every connection — including to `127.0.0.1` — through the WAN policy routing table (`table 201.eth4`). That table has no route for loopback, so the push never reaches the listener. Serve mode works on Raspberry Pi, generic Linux, macOS, and Docker with a same-host DDNS client, but **not** with UniFi's built-in pusher. On UniFi Dream devices, use **Lambda mode** instead.
+
+### Lambda mode (event-driven, cloud)
+
+```mermaid
+flowchart LR
+    A[UniFi inadyn<br/>or any dyndns client]:::start -.->|HTTPS push| B[API Gateway<br/>HTTP API]
+    B --> C[Lambda<br/>provided.al2023 arm64]:::lambda
+    C --> D{SSM-cached<br/>shared secret}
+    D -->|fetch/cache 60s| E[(SSM Parameter<br/>Store SecureString)]
+    C --> F{Constant-time<br/>Basic Auth}
+    F -->|fail| Y[badauth]:::deny
+    F -->|ok| G{Hostname<br/>match?}
+    G -->|no| Z[nohost]:::deny
+    G -->|yes| H{dry-run?}
+    H -->|true| DR[good sourceIP<br/>skipping Route53]:::skip
+    H -->|false| I[Route53 UPSERT<br/>with sourceIP]:::update
+    I --> J[CloudWatch Logs]
+    J --> K[good sourceIP]:::exit
+
+    classDef start fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef lambda fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef update fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    classDef skip fill:#e1bee7,stroke:#8e24aa
+    classDef deny fill:#ffcdd2,stroke:#c62828
+    classDef exit fill:#fff9c4,stroke:#fbc02d
+```
+
+The IP published to Route53 is **always** `requestContext.http.sourceIp` (the TCP peer recorded by API Gateway). The `myip=` query parameter is ignored — same "never trust client-supplied values" posture as serve mode.
+
+Deployed via an OpenTofu module at `deploy/aws-lambda/tofu/` (13 AWS resources, all configurable). The IAM policy is scoped to exactly one zone + one record + UPSERT-only + A-only + one SSM parameter + KMS `aws/ssm` with a `kms:ViaService` condition. See [`deploy/aws-lambda/README.md`](deploy/aws-lambda/README.md).
+
+> **💡 Cost Tip**: Route53 hosts a zone for ~USD 0.50/month plus query fees. Lambda + API Gateway + SSM + CloudWatch at household-scale push volume stay firmly in AWS's free tier — a realistic personal deployment is $0/month for the first year and single-digit cents afterwards.
 
 ## Development
 

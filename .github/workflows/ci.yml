@@ -61,6 +61,10 @@ jobs:
           files: ./coverage.out
           flags: unittests
           name: codecov-umbrella
+          # Codecov requires a token to upload when the target branch
+          # is protected. Add CODECOV_TOKEN as a repo secret at
+          # Settings → Secrets and variables → Actions.
+          token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true
 
   lint:

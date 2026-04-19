@@ -58,10 +58,26 @@ hostname = "home.example.com"
 # recipe produces this file at the default location.
 # lambda_zip_path = "../dist/lambda.zip"
 
-# Additional tags merged into the module's built-in 'app=dddns'
-# and 'hostname=<...>' tags on every created resource. Useful for
-# cost allocation reports.
+# Additional tags merged into the module's built-in 'app=dddns',
+# 'hostname=<...>', and 'module=deploy/aws-lambda' tags on every
+# created resource. Use this to layer on whatever tagging scheme
+# your account enforces (cost allocation, ownership, environment,
+# etc.) without forking the module.
+#
+# AWS tag keys are case-sensitive. Pick one convention and stick
+# with it — mixing 'Owner' and 'owner' in the same account makes
+# cost reports messy.
+#
+# Example: a 5-tag 'Well-Architected-lite' schema.
 # tags = {
-#   owner = "me"
-#   env   = "home"
+#   Project     = "dddns"
+#   Environment = "prod"
+#   Owner       = "dddns-admin"    # role identifier, NOT a personal email
+#                                  # — resource tags are visible in the billing
+#                                  # console and CloudTrail events, which in an
+#                                  # AWS Organization can be read across accounts.
+#                                  # Use a role name ("dddns-admin", "platform-team")
+#                                  # instead of an individual's address.
+#   ManagedBy   = "opentofu"
+#   Repo        = "dddns"
 # }

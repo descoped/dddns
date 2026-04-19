@@ -55,3 +55,6 @@ deploy/**/*.local.tfvars
 
 # Ephemeral Claude Code session handoffs (llm-skills/session-snapshot)
 .claude/session-state/
+
+# Claude Code harness artefact — lockfile for background timers
+.claude/scheduled_tasks.lock

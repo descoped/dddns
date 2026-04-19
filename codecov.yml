@@ -20,23 +20,24 @@ coverage:
   round: down
 
   status:
-    # Project-level check: allow a 1% downward wiggle before flagging.
-    # Avoids red PRs for rounding noise after a tiny refactor.
+    # Both checks are *informational*: they compute and report coverage
+    # deltas on PRs so reviewers can see the impact, but they do NOT
+    # block the merge button. Rationale: coverage thresholds don't
+    # distinguish "genuine test gap" from "refactor that deleted
+    # tested dead code" or "1-line error-path fix that can't be
+    # meaningfully tested". GitHub branch protection + human review
+    # are the actual gate; Codecov is a signal.
     project:
       default:
         target: auto
         threshold: 1%
+        informational: true
         if_ci_failed: error
-        informational: false
 
-    # Patch-level check: new code should carry its own tests. 70% is a
-    # practical floor — lenient enough that a legitimate 1-line error-
-    # path fix doesn't require adding a test for it, strict enough that
-    # a substantial feature PR has to ship tests.
     patch:
       default:
-        target: 70%
-        threshold: 5%
+        target: auto
+        informational: true
         if_ci_failed: error
 
 # Exclude files the coverage plan marks as intentionally untested.

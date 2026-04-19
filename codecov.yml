@@ -1,0 +1,58 @@
+# Codecov config — tunes the badge + PR checks to match dddns's
+# coverage plan (ai_docs/20260418T2259Z_test-coverage-plan.md).
+#
+# We deliberately exclude code the plan classifies as Tier 3 (testing
+# it would be test-ware, not defect-catching). The remaining surface
+# is what the badge grades.
+
+coverage:
+  # Badge color ramp: red below 70, yellow 70..80, green above 80.
+  # Aligns with the plan's "quality of tests trumps raw percentage"
+  # stance while still rewarding the honest climb from 54% -> 72%+.
+  range: "70...85"
+  precision: 1
+  round: down
+
+  status:
+    # Project-level check: allow a 1% downward wiggle before flagging.
+    # Avoids red PRs for rounding noise after a tiny refactor.
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        if_ci_failed: error
+        informational: false
+
+    # Patch-level check: new code should carry its own tests. 70% is a
+    # practical floor — lenient enough that a legitimate 1-line error-
+    # path fix doesn't require adding a test for it, strict enough that
+    # a substantial feature PR has to ship tests.
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        if_ci_failed: error
+
+# Exclude files the coverage plan marks as intentionally untested.
+# These are genuine entry points or build-time constants; testing
+# them would test the compiler/runtime, not our code.
+ignore:
+  - "main.go"                           # cobra Execute + os.Exit wrapper
+  - "internal/version/**"               # string concatenation on build-time vars
+  - "deploy/aws-lambda/main.go"         # Lambda bootstrap; runs in AWS, not in tests
+  - "**/*_test.go"                      # defense-in-depth; Codecov should do this by default
+
+# Comment less — PR noise. Only post once per PR, and only when
+# coverage materially changes.
+comment:
+  layout: "reach,diff,flags,tree"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# GitHub checks: keep them soft so a drop in coverage doesn't block
+# a merge the reviewer has already approved. CI still gates real
+# failures (test runs, lint).
+github_checks:
+  annotations: true

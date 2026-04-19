@@ -11,11 +11,14 @@ codecov:
   require_ci_to_pass: true
 
 coverage:
-  # Badge color ramp: red below 65, gradient 65..80, green above 80.
-  # Floor set below the current measured number (66.4%) so the badge
-  # reflects "yellow / keep climbing" rather than "red / broken" at
-  # the honest coverage baseline.
-  range: "65...80"
+  # Badge is rendered as a continuous red→green gradient across the
+  # `range`. Keep 66.4% (current baseline) near the *middle* of the
+  # range so the badge shows yellow, not red.
+  #
+  # Position of N within [lo, hi] = (N - lo) / (hi - lo).
+  #   range "50...80": 66.4% -> position 0.55 -> yellow
+  # Below 50% = red (genuinely low), 80%+ = green (target).
+  range: "50...80"
   precision: 1
   round: down
 

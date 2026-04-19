@@ -266,6 +266,86 @@ func TestParseBasicAuth(t *testing.T) {
 	}
 }
 
+// TestHandler_DryRun_SkipsRoute53 is the headline test for the
+// ?dry-run=true feature. The handler must authenticate, match the
+// hostname, and return "good <ip> (dry-run)" WITHOUT calling
+// route53.UpdateIP. Regression: a silent regression here would
+// actually UPSERT during what operators think is a test.
+func TestHandler_DryRun_SkipsRoute53(t *testing.T) {
+	h := newTestHandler(t, nil)
+	r53 := h.route53.(*stubRoute53)
+
+	req := mkRequest(basicAuth("dddns", testSecret), testHostname, testSourceIP)
+	req.QueryStringParameters["dry-run"] = "true"
+
+	resp, err := h.handle(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	body := strings.TrimSpace(resp.Body)
+	if body != "good "+testSourceIP+" (dry-run)" {
+		t.Errorf("body = %q, want 'good %s (dry-run)'", body, testSourceIP)
+	}
+	if len(r53.pushed) != 0 {
+		t.Errorf("Route53 UpdateIP called on dry-run; pushed IPs = %v", r53.pushed)
+	}
+}
+
+// TestHandler_DryRun_StillEnforcesAuth ensures dry-run is not a bypass
+// for authentication. A bad secret must still fail 'badauth' before
+// the dry-run branch is even reached — otherwise the endpoint would
+// leak information about which hostnames exist.
+func TestHandler_DryRun_StillEnforcesAuth(t *testing.T) {
+	h := newTestHandler(t, nil)
+	r53 := h.route53.(*stubRoute53)
+
+	req := mkRequest(basicAuth("dddns", "wrong-secret"), testHostname, testSourceIP)
+	req.QueryStringParameters["dry-run"] = "true"
+
+	resp, _ := h.handle(context.Background(), req)
+	if got := strings.TrimSpace(resp.Body); got != "badauth" {
+		t.Errorf("dry-run with bad secret = %q, want 'badauth' (no bypass)", got)
+	}
+	if len(r53.pushed) != 0 {
+		t.Errorf("Route53 called despite badauth: %v", r53.pushed)
+	}
+}
+
+// TestHandler_DryRun_StillMatchesHostname — same reasoning: dry-run
+// does not bypass the hostname check. An attacker probing for valid
+// hostnames on a shared endpoint must not get different responses
+// for dry-run vs real.
+func TestHandler_DryRun_StillMatchesHostname(t *testing.T) {
+	h := newTestHandler(t, nil)
+
+	req := mkRequest(basicAuth("dddns", testSecret), "other.example.com", testSourceIP)
+	req.QueryStringParameters["dry-run"] = "true"
+
+	resp, _ := h.handle(context.Background(), req)
+	if got := strings.TrimSpace(resp.Body); got != "nohost" {
+		t.Errorf("dry-run with wrong hostname = %q, want 'nohost'", got)
+	}
+}
+
+// TestIsDryRun_Matrix documents the truthy values recognised. Anything
+// not in the explicit allow-list (including the empty string) returns
+// false — no accidental enabling from a stray whitespace header.
+func TestIsDryRun_Matrix(t *testing.T) {
+	truthy := []string{"true", "1", "yes", "on", "TRUE", "True", "  true  ", "YES"}
+	falsy := []string{"", "false", "0", "no", "off", "dry-run", "enabled", " "}
+
+	for _, v := range truthy {
+		if !isDryRun(v) {
+			t.Errorf("isDryRun(%q) = false, want true", v)
+		}
+	}
+	for _, v := range falsy {
+		if isDryRun(v) {
+			t.Errorf("isDryRun(%q) = true, want false", v)
+		}
+	}
+}
+
 func TestParseBasicAuth_LowercaseHeaderKey(t *testing.T) {
 	// API Gateway normalizes header keys to lowercase before handing
 	// them to the Lambda. Verify the lookup is case-insensitive.

@@ -110,6 +110,17 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 		return dyndns("nohost"), nil
 	}
 
+	// Dry-run short-circuit. Accepts ?dry-run=true (or =1) so operators
+	// can verify the whole auth + hostname-match pipeline against a
+	// live deploy without mutating Route53. The response still looks
+	// like a successful update ("good <ip>") so a dyndns client won't
+	// go into a retry loop — but the "dry-run" marker lets downstream
+	// log scraping tell the difference.
+	if isDryRun(req.QueryStringParameters["dry-run"]) {
+		log.Printf("dry-run: would UPSERT %s -> %s (skipping Route53)", h.cfg.hostname, sourceIP)
+		return dyndns("good " + sourceIP + " (dry-run)"), nil
+	}
+
 	// Route53 UPSERT. Bound by the handler's context (API Gateway
 	// applies its own 30s integration timeout; we add a shorter
 	// deadline so a hung Route53 call can't eat our execution
@@ -122,6 +133,17 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 	}
 
 	return dyndns("good " + sourceIP), nil
+}
+
+// isDryRun reports whether the query-string value represents a truthy
+// dry-run request. Accepts "true"/"1"/"yes"/"on" case-insensitively;
+// anything else (including empty) returns false.
+func isDryRun(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // dyndns builds a minimal HTTP 200 text/plain response.

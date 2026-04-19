@@ -96,12 +96,12 @@ data "aws_iam_policy_document" "ssm" {
     # Default AWS-managed SSM KMS key — Parameter Store uses this for
     # SecureString entries unless a customer-managed key is configured.
     resources = [
-      "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm",
+      "arn:aws:kms:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:alias/aws/ssm",
     ]
     condition {
       test     = "StringEquals"
       variable = "kms:ViaService"
-      values   = ["ssm.${data.aws_region.current.name}.amazonaws.com"]
+      values   = ["ssm.${data.aws_region.current.region}.amazonaws.com"]
     }
   }
 }

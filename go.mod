@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/aws/aws-lambda-go v1.55.1
 	github.com/spf13/cobra v1.10.2
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 )
 
 require (

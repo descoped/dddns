@@ -1,9 +1,13 @@
-"""Move the [Unreleased] notes of CHANGELOG.md under a new version heading.
+"""Release notes from CHANGELOG.md.
 
     python3 scripts/release-changelog.py CHANGELOG.md v0.3.4 2026-12-01 > new.md
+        Moves the [Unreleased] notes under a new version heading. Writes the new
+        changelog to stdout and the notes to stderr. Fails when [Unreleased] is
+        empty, so a release always says what changed.
 
-Writes the new changelog to stdout and the release notes to stderr. Fails when
-[Unreleased] is empty, so a release always says what changed.
+    python3 scripts/release-changelog.py --notes CHANGELOG.md v0.3.4 > notes.md
+        Prints the notes of one version (the GitHub release text). Fails when
+        the version has no section.
 """
 import re
 import sys
@@ -15,6 +19,15 @@ def fail(msg):
     sys.stderr.write(f"release: {msg}\n")
     sys.exit(1)
 
+
+if sys.argv[1] == "--notes":
+    path, tag = sys.argv[2:4]
+    text = open(path, encoding="utf-8").read()
+    found = re.search(rf"^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|^---$|\Z)", text, re.S | re.M)
+    if not found or not found.group(1).strip():
+        fail(f"CHANGELOG.md has no notes for {tag}")
+    sys.stdout.write(found.group(1).strip() + "\n")
+    sys.exit(0)
 
 path, tag, date = sys.argv[1:4]
 text = open(path, encoding="utf-8").read()

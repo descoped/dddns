@@ -17,12 +17,14 @@ One-off cross-build: `GOOS=... GOARCH=... go build .`
 
 ## Release process
 
-- **One command:** `just release <x.y.z>` (`scripts/release.sh`). It checks main is clean and in step with
-  GitHub, CI passed, the version is newer and `just check` passes; moves the `[Unreleased]` notes in
-  `CHANGELOG.md` under the version; asks once; commits, tags, pushes; and waits for the release build.
-  `--dry-run` only checks. Write the changes under `[Unreleased]` as part of each PR.
-- Deploying a release to descoped's AWS account is not done here: it is `dddns/prod/deploy.sh <x.y.z>` in
-  the private `descoped-deploy` repo.
+- **When the user says "release"**, follow `.claude/commands/release.md`: pick the version, write the
+  notes, run `just release <x.y.z> --yes`. Saying "release" is the permission to commit, tag and push.
+- `just release <x.y.z>` (`scripts/release.sh`) checks main is clean and in step with GitHub, CI passed, the
+  version is newer and `just check` passes; moves the `[Unreleased]` notes in `CHANGELOG.md` under the
+  version; commits, tags, pushes; and waits for the release build. `--dry-run` only checks.
+- The GitHub release text is the version's section of `CHANGELOG.md` (`goreleaser.yml`), plus the header
+  and install footer from `.goreleaser.yaml`.
+- This repo is public: release notes, commits and docs never mention where or how anyone deploys it.
 - GoReleaser + git tags; automated via `.github/workflows/goreleaser.yml`.
 - Cross-platform binaries: UDM arm64, Linux amd64/arm/arm64, macOS Intel + Apple Silicon, Windows amd64/arm64.
 - SHA-256 release verification.

@@ -26,11 +26,21 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # The release text is the tag's section of CHANGELOG.md. A tag without one falls back to
+      # GoReleaser's list of commits.
+      - name: Release notes from CHANGELOG.md
+        run: |
+          if python3 scripts/release-changelog.py --notes CHANGELOG.md "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"; then
+            echo "GORELEASER_ARGS=release --clean --release-notes=$RUNNER_TEMP/notes.md" >> "$GITHUB_ENV"
+          else
+            echo "GORELEASER_ARGS=release --clean" >> "$GITHUB_ENV"
+          fi
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          args: ${{ env.GORELEASER_ARGS }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -50,7 +50,7 @@ lint:
 # Quick gate — run before committing.
 check: fmt vet test lint
 
-# Release a version: `just release 0.3.4` (asks once, tags, pushes; GitHub builds it). Add --dry-run to only check.
+# Release a version: `just release 0.3.4` (asks once, tags, pushes; GitHub builds it). --dry-run only checks; --yes skips the question.
 release version *flags:
     @scripts/release.sh {{version}} {{flags}}
 

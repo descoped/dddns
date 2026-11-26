@@ -2,9 +2,11 @@
 # Release a new dddns version. Run it through just:
 #
 #   just release 0.3.4             # checks, shows the notes, asks once, then releases
+#   just release 0.3.4 --yes       # the same without the question (for when it was asked already)
 #   just release 0.3.4 --dry-run   # checks and shows the notes; changes nothing
 #
-# It stops, with nothing changed, unless: you are on main, in step with GitHub, with no local changes;
+# It stops, with nothing changed, unless: you are on main, in step with GitHub, with no local changes
+# other than to CHANGELOG.md (so the notes can be written just before releasing);
 # the version is newer than the last tag; CI on main passed; `just check` passes; and CHANGELOG.md has
 # notes under [Unreleased]. Then it moves those notes under the version, commits, tags, pushes, and
 # waits for GitHub Actions (goreleaser.yml) to publish the release.
@@ -17,13 +19,20 @@ step() { echo "• $*"; }
 here="$(cd "$(dirname "$0")" && pwd)"
 cd "$(git rev-parse --show-toplevel)"
 version="${1:-}"; version="${version#v}"
-dry=false; [ "${2:-}" = "--dry-run" ] && dry=true
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: just release <x.y.z> [--dry-run]"
+dry=false; yes=false
+case "${2:-}" in
+  "") ;;
+  --dry-run) dry=true ;;
+  --yes) yes=true ;;
+  *) die "usage: just release <x.y.z> [--dry-run|--yes]" ;;
+esac
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: just release <x.y.z> [--dry-run|--yes]"
 tag="v$version"
 
 step "Checking the repository"
 [ "$(git branch --show-current)" = main ] || die "switch to main first: git switch main"
-[ -z "$(git status --porcelain)" ] || die "you have local changes; commit or stash them first"
+others() { git status --porcelain | grep -v '^ M CHANGELOG.md$' || true; }
+[ -z "$(others)" ] || die "you have local changes besides CHANGELOG.md; commit or stash them first"
 git fetch -q --tags origin
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "main differs from GitHub; run git pull (or push your commits)"
 git rev-parse -q --verify "refs/tags/$tag" >/dev/null && die "$tag already exists"
@@ -42,7 +51,7 @@ esac
 step "Running the tests (just check)"
 log="$(mktemp)"; trap 'rm -f "$log" "$log.md"' EXIT
 just check >"$log" 2>&1 || { tail -30 "$log"; die "just check failed"; }
-[ -z "$(git status --porcelain)" ] || die "just check reformatted files; commit that first"
+[ -z "$(others)" ] || die "just check reformatted files; commit that first"
 
 python3 -I "$here/release-changelog.py" CHANGELOG.md "$tag" "$(date +%F)" >"$log.md" 2>"$log" || { cat "$log" >&2; exit 1; }
 echo
@@ -51,9 +60,11 @@ sed 's/^/    /' "$log"
 echo
 
 if $dry; then echo "Dry run: nothing changed."; exit 0; fi
-[ -t 0 ] || die "run this in a terminal; it asks before releasing"
-read -r -p "Release $tag? [y/N] " answer
-[[ "$answer" =~ ^[yY] ]] || die "stopped; nothing changed"
+if ! $yes; then
+  [ -t 0 ] || die "run this in a terminal, or add --yes; it asks before releasing"
+  read -r -p "Release $tag? [y/N] " answer
+  [[ "$answer" =~ ^[yY] ]] || die "stopped; nothing changed"
+fi
 
 step "Committing the changelog, tagging $tag and pushing"
 cp "$log.md" CHANGELOG.md
@@ -74,4 +85,3 @@ gh run watch "$run" -R "$repo" --exit-status >/dev/null 2>&1 \
 
 echo
 echo "✓ dddns $tag is released: https://github.com/$repo/releases/tag/$tag"
-echo "  To put it on AWS: cd ../descoped-deploy && dddns/prod/deploy.sh $version"

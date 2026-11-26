@@ -32,9 +32,9 @@ type handler struct {
 // Lambda container reuse means we pay the SSM GetParameter round trip
 // at most every `ttl` seconds instead of every request — which keeps
 // the steady-state cost low while still picking up rotations promptly.
-// Rotations propagate within `ttl` automatically; during the overlap
-// window the old secret also still works (UniFi UI caches on its side
-// too), so we don't strictly need to invalidate on auth failure.
+// Rotations propagate within `ttl` automatically. Until then a warm
+// container accepts only the old secret; the client's retry covers
+// that window, so we don't invalidate on auth failure.
 type secretCache struct {
 	mu        sync.Mutex
 	value     string
@@ -64,8 +64,11 @@ func (c *secretCache) get(ctx context.Context, ssm *ssmClient, name string) (str
 // handle implements the dyndns v2 protocol
 // (https://help.dyn.com/remote-access-api/perform-update/). The
 // response body is a plain-text diagnostic ("good <ip>" / "nohost" /
-// "badauth" / "dnserr" / "nochg <ip>"), HTTP 200 in all cases —
-// dyndns clients inspect the body, not the status code.
+// "badauth" / "notfqdn" / "dnserr ..."), HTTP 200 in all cases —
+// dyndns clients inspect the body, not the status code. Because the
+// status code is always 200, every outcome is also logged as one
+// line, so CloudWatch shows rejected pushes. The password is never
+// logged; the client-supplied hostname is quoted.
 func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	// L6 — the only IP we will publish is the TCP source IP that
 	// API Gateway recorded. The myip query parameter is ignored
@@ -78,15 +81,18 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 		// Should never happen under API Gateway HTTP API — if it
 		// does, we're in a misconfigured environment and blind
 		// publishing is unsafe. Fail closed.
+		log.Printf("dnserr: no source ip")
 		return dyndns("dnserr no source ip"), nil
 	}
 	if net.ParseIP(sourceIP) == nil {
+		log.Printf("dnserr: source ip %q unparseable", sourceIP)
 		return dyndns("dnserr source ip unparseable"), nil
 	}
 
 	// Auth — Basic, constant-time compare against SSM-stored secret.
 	user, pass, ok := parseBasicAuth(req.Headers)
 	if !ok {
+		log.Printf("badauth: no basic auth from %s", sourceIP)
 		return dyndns("badauth"), nil
 	}
 	_ = user // UniFi's inadyn sends a username; we ignore it and auth on the secret only.
@@ -97,6 +103,7 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 		return dyndns("dnserr ssm"), nil
 	}
 	if subtle.ConstantTimeCompare([]byte(pass), []byte(expected)) != 1 {
+		log.Printf("badauth: wrong password from %s", sourceIP)
 		return dyndns("badauth"), nil
 	}
 
@@ -104,9 +111,11 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 	// behaviour from internal/server/handler.go.
 	hostname := strings.TrimSpace(req.QueryStringParameters["hostname"])
 	if hostname == "" {
+		log.Printf("notfqdn: no hostname from %s", sourceIP)
 		return dyndns("notfqdn"), nil
 	}
 	if !strings.EqualFold(hostname, h.cfg.hostname) {
+		log.Printf("nohost: %q from %s", hostname, sourceIP)
 		return dyndns("nohost"), nil
 	}
 
@@ -132,6 +141,7 @@ func (h *handler) handle(ctx context.Context, req events.APIGatewayV2HTTPRequest
 		return dyndns("dnserr " + err.Error()), nil
 	}
 
+	log.Printf("good: %s -> %s", h.cfg.hostname, sourceIP)
 	return dyndns("good " + sourceIP), nil
 }
 

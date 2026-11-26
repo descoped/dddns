@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -353,5 +355,42 @@ func TestParseBasicAuth_LowercaseHeaderKey(t *testing.T) {
 	u, p, ok := parseBasicAuth(h)
 	if !ok || u != "dddns" || p != testSecret {
 		t.Errorf("lowercase header key not matched: got (%q, %q, %v)", u, p, ok)
+	}
+}
+
+// Every outcome is logged, because the response is HTTP 200 whatever
+// happens. The password must never reach the log.
+func TestHandler_LogsEveryOutcome(t *testing.T) {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	cases := []struct {
+		name string
+		req  events.APIGatewayV2HTTPRequest
+		want string
+	}{
+		{"good", mkRequest(basicAuth("dddns", testSecret), testHostname, testSourceIP), "good: " + testHostname + " -> " + testSourceIP},
+		{"no auth", mkRequest("", testHostname, testSourceIP), "badauth: no basic auth from " + testSourceIP},
+		{"wrong password", mkRequest(basicAuth("dddns", "not-the-secret"), testHostname, testSourceIP), "badauth: wrong password from " + testSourceIP},
+		{"no hostname", mkRequest(basicAuth("dddns", testSecret), "", testSourceIP), "notfqdn: no hostname from " + testSourceIP},
+		{"other hostname", mkRequest(basicAuth("dddns", testSecret), "evil.example.com\n", testSourceIP), `nohost: "evil.example.com" from ` + testSourceIP},
+		{"no source ip", mkRequest(basicAuth("dddns", testSecret), testHostname, ""), "dnserr: no source ip"},
+	}
+	h := newTestHandler(t, nil)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			if _, err := h.handle(context.Background(), tc.req); err != nil {
+				t.Fatalf("handle: %v", err)
+			}
+			got := buf.String()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("log = %q, want it to contain %q", got, tc.want)
+			}
+			if strings.Contains(got, testSecret) || strings.Contains(got, "not-the-secret") {
+				t.Errorf("log contains a password: %q", got)
+			}
+		})
 	}
 }

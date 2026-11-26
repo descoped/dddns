@@ -7,6 +7,8 @@ Guidance for Claude Code when working with dddns.
 **NEVER COMMIT WITHOUT EXPLICIT PERMISSION**
 
 - When the user says "do not commit" or indicates this is a planning/design session, you MUST NOT make any commits.
+- Exception: when the user says **"release"**, follow `.claude/commands/release.md` to the end, including the
+  commit, tag and push it makes.
 - Always wait for explicit approval before making design decisions or architectural changes.
 - The developer is the decision-maker; Claude Code is an assistant.
 - Present options and recommendations; let the user choose.

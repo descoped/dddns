@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### 🔧 Changed
+- GitHub release notes are now this changelog's section for the version, instead of a list of commits.
 - Releasing is one command, `just release <x.y.z>`: it checks, moves these notes under the version, tags, pushes and waits for the release build. The hand-kept Version History list at the end of this file is gone; every version has its own section.
 
 ## [v0.3.3] - 2026-11-26

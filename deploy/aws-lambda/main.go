@@ -115,6 +115,16 @@ func main() {
 		log.Fatalf("dddns-lambda: config load failed: %v", err)
 	}
 
+	// No connection reuse. Lambda freezes the process between
+	// invocations, so a kept-alive connection to SSM or Route53 may have
+	// been closed by the server by the time it is used again. Both calls
+	// are POSTs, which net/http does not resend, so the request failed
+	// with EOF (seen once on SSM). A new connection per call costs a TLS
+	// handshake on a path that runs a few times a day.
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		t.DisableKeepAlives = true
+	}
+
 	route53, err := dns.NewRoute53Client(
 		context.Background(),
 		cfg.region, cfg.accessKey, cfg.secretKey, cfg.sessionToken,

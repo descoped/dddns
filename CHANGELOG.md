@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(empty)
+### 🔧 Changed
+- Releasing is one command, `just release <x.y.z>`: it checks, moves these notes under the version, tags, pushes and waits for the release build. The hand-kept Version History list at the end of this file is gone; every version has its own section.
 
 ## [v0.3.3] - 2026-11-26
 
@@ -301,17 +302,6 @@ tests/               # Integration tests
 - Follows "Do As Little As Possible To Make It Work" philosophy
 
 ---
-
-## Version History
-
-- **v0.3.3** (2026-11-26) — Lambda logs every outcome, fresh connection per AWS call, no drift after rotation; yaml v4
-- **v0.3.2** (2026-04-19) — Lambda dry-run + coverage lift to 69.7% + AWS v6 + Codecov hardening
-- **v0.3.1** (2026-04-18) — Test coverage 54% → 67.5%; configurable `update_interval`/`update_timeout`; `fatalf` extraction
-- **v0.3.0** (2026-04-18) — AWS Lambda deployment form (API Gateway + Route53 + SSM + OpenTofu module)
-- **v0.2.1** (2026-04-18) — Cron output → systemd-journald; `--verbose`; installer `--probe`; GOMEMLIMIT on serve
-- **v0.2.0** (2026-04-18) — Serve mode; AWS SDK + viper retired (stdlib-only); Go 1.26; installer hardening
-- **v0.1.1** (2025-09-14) — Bug fixes, UniFi OS v4 support, documentation improvements
-- **v0.1.0** (2025-09-13) — Initial release with core functionality
 
 [Unreleased]: https://github.com/descoped/dddns/compare/v0.3.3...HEAD
 [v0.3.3]: https://github.com/descoped/dddns/releases/tag/v0.3.3

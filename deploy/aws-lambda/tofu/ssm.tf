@@ -5,8 +5,9 @@
 #   2. Operator runs ../scripts/rotate-secret.sh, which calls
 #      `aws ssm put-parameter --overwrite` and prints the new
 #      secret in a framed block for pasting into UniFi UI.
-#   3. ignore_changes = [value] means subsequent `tofu apply` runs
-#      don't clobber the rotated value.
+#   3. ignore_changes = [value, description] means subsequent
+#      `tofu apply` runs don't clobber the rotated value, nor the
+#      rotation timestamp the script writes into the description.
 #
 # The random placeholder is never used in production — the rotate
 # script replaces it before any real client pushes. Its sole purpose
@@ -28,6 +29,6 @@ resource "aws_ssm_parameter" "shared_secret" {
   tags = local.common_tags
 
   lifecycle {
-    ignore_changes = [value]
+    ignore_changes = [value, description]
   }
 }

@@ -304,14 +304,13 @@ internal/
 
 ### Release Process
 
-Releases use [GoReleaser](https://goreleaser.com/) with git tags:
-
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+just release 0.3.4
 ```
 
-GitHub Actions automatically builds and releases binaries for all platforms.
+It checks the repo, CI and tests, moves the `[Unreleased]` notes in `CHANGELOG.md` under the version, tags
+and pushes; GitHub Actions then builds and publishes binaries for all platforms with
+[GoReleaser](https://goreleaser.com/). See [.github/RELEASE.md](.github/RELEASE.md).
 
 ## Configuration
 

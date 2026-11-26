@@ -2,6 +2,13 @@
 
 Welcome to the dddns documentation! This guide will help you install, configure, and use dddns to automatically update your AWS Route53 DNS records with your dynamic IP address.
 
+## What's New in v0.3.3
+
+- **Lambda logs every outcome** — the Lambda answers HTTP 200 whatever happens (dyndns clients read the body), so a rejected push used to leave no trace. Every request now logs one line: `good`, `badauth`, `nohost`, `notfqdn` or `dnserr`. See [deploy/aws-lambda/README.md](../deploy/aws-lambda/README.md#troubleshooting).
+- **Steadier Lambda** — a new connection per AWS call, so a request no longer fails with `EOF` on a connection that went stale while the Lambda was idle; and rotating the secret no longer leaves drift in `tofu plan`.
+- **YAML v4** — the config parser moved to `go.yaml.in/yaml/v4`; existing config files load exactly as before.
+- v0.3.1 and v0.3.2 (test coverage, `update_interval`/`update_timeout`, Lambda `?dry-run=true`): see [CHANGELOG.md](../CHANGELOG.md).
+
 ## What's New in v0.3.0
 
 - **AWS Lambda deployment form** — run dddns behind an API Gateway HTTPS endpoint instead of (or alongside) the on-device cron / serve modes. The right fit when UniFi UI's Custom Dynamic DNS is the push source and you don't want to run anything on the router. Full OpenTofu module + rotate-secret helper at `deploy/aws-lambda/`. Household-scale deployments stay in the AWS free tier.

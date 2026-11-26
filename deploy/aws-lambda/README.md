@@ -70,15 +70,15 @@ locations — you don't need to configure anything in this module.
 Whichever account your `aws sts get-caller-identity` resolves to is
 the one `tofu apply` will deploy into.
 
-If you use named profiles (`aws configure --profile descoped`),
+If you use named profiles (`aws configure --profile my-profile`),
 select one at apply time:
 
 ```bash
 # Named profile
-AWS_PROFILE=descoped tofu apply
+AWS_PROFILE=my-profile tofu apply
 
 # Or export for the whole shell session
-export AWS_PROFILE=descoped
+export AWS_PROFILE=my-profile
 tofu apply
 ```
 
@@ -97,13 +97,13 @@ just build-aws-lambda
 # 2. Apply the OpenTofu module. tofu auto-loads terraform.tfvars.
 cd deploy/aws-lambda/tofu
 tofu init
-AWS_PROFILE=descoped tofu apply   # or just 'tofu apply' if using default profile
+AWS_PROFILE=my-profile tofu apply   # or just 'tofu apply' if using default profile
 
 # 3. Rotate the shared secret. The tofu apply creates the SSM
 #    parameter with a random placeholder; the helper replaces it
 #    with a fresh 256-bit value and prints it for paste.
 cd ..
-AWS_PROFILE=descoped ./scripts/rotate-secret.sh
+AWS_PROFILE=my-profile ./scripts/rotate-secret.sh
 ```
 
 The rotate script prints the new secret in a framed block. Copy it
@@ -189,7 +189,7 @@ cleanly removes it all (Lambda, API, SSM param, IAM role, log group):
 
 ```bash
 cd deploy/aws-lambda/tofu
-AWS_PROFILE=descoped tofu destroy   # picks up terraform.tfvars automatically
+AWS_PROFILE=my-profile tofu destroy   # picks up terraform.tfvars automatically
 ```
 
 This does **not** touch your Route53 records — the A record you

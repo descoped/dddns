@@ -154,7 +154,7 @@ dig +short home.example.com @1.1.1.1
 
 ## Rotating the secret
 
-Any time — the operation is non-disruptive:
+Any time. Pushes fail with `badauth` until the router has the new value, so paste it straight away:
 
 ```bash
 cd deploy/aws-lambda
@@ -162,13 +162,13 @@ cd deploy/aws-lambda
 ```
 
 Paste the printed value into UniFi UI. The Lambda caches the secret
-for 60 seconds between invocations (keeps SSM cost negligible), so:
+for up to 60 seconds (keeps SSM cost negligible), so:
 
-- During the 60-second overlap window **both** the old and new
-  secrets authenticate successfully.
-- After the window, only the new secret works.
-- UniFi's inadyn cache also bridges the window, so there's no
-  practical race.
+- For up to 60 seconds a warm Lambda still accepts only the **old**
+  secret and answers the new one with `badauth`.
+- After that, only the new secret works.
+- inadyn retries a failed push, so the update lands within a few
+  minutes without further action.
 
 ## Costs
 
@@ -271,11 +271,23 @@ least-privilege set is the union of all `aws_iam_*` and `aws_lambda_*`
 and `aws_apigatewayv2_*` and `aws_ssm_parameter` resources in the
 module's `tofu plan`.
 
-**UniFi UI shows `badauth` repeatedly**
+**The record never changes, or UniFi UI shows `badauth` repeatedly**
 
-Run `./scripts/rotate-secret.sh` and paste the new value into UniFi
-UI. The old secret may have drifted out of sync, or the SSM parameter
-was never rotated from the random bootstrap placeholder.
+The Lambda answers HTTP 200 for every outcome, so API Gateway's 4xx
+and 5xx metrics stay at zero even when every push is rejected. Read
+the outcome from the log, one line per push:
+
+```bash
+aws logs tail $(cd tofu && tofu output -raw cloudwatch_log_group) --since 1h
+```
+
+- `badauth: wrong password` or `badauth: no basic auth` — run
+  `./scripts/rotate-secret.sh` and paste the new value into UniFi UI.
+  The SSM parameter may never have been rotated from the random
+  bootstrap placeholder.
+- `nohost: "<name>"` — the hostname in UniFi UI is not the one the
+  module was deployed for.
+- `good: <host> -> <ip>` — the push worked.
 
 **`dnserr` responses — Route53 IAM**
 

@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(empty)
+### 🐛 Fixes
+- **Lambda: rejected pushes were invisible.** Every outcome is answered HTTP 200 (dyndns clients read the body), and `badauth`, `nohost` and `notfqdn` were not logged, so a router sending a wrong password showed up as healthy traffic. The handler now logs one line per outcome (`good`, `badauth`, `nohost`, `notfqdn`, `dnserr`); the password is never logged.
+- **Lambda: occasional `ssm fetch failed: ... EOF`.** A kept-alive connection could be stale after Lambda froze the process between invocations, and net/http does not resend a POST. The Lambda now opens a new connection per call.
+- **Lambda tofu module: drift after every rotation.** `rotate-secret.sh` writes a timestamp into the SSM parameter's description; the module now ignores `description` as well as `value`.
+
+### 🔧 Changed
+- `go.yaml.in/yaml` v3 → v4 (Renovate #49). Decoding and encoding of every documented config shape is unchanged, and files written by either version are read by the other, so a rollback is safe.
+- `github.com/spf13/pflag` 1.0.10 → 1.1.0 (indirect).
+
+### 📚 Documentation
+- `deploy/aws-lambda/README.md`: rotation is not seamless (the cached old secret is accepted for up to 60 s, the new one rejected); troubleshooting reads the outcome from the log instead of HTTP status.
 
 ## [v0.3.2] - 2026-04-19
 

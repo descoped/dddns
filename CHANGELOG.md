@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(empty)
+
+## [v0.3.3] - 2026-11-26
+
 ### 🐛 Fixes
 - **Lambda: rejected pushes were invisible.** Every outcome is answered HTTP 200 (dyndns clients read the body), and `badauth`, `nohost` and `notfqdn` were not logged, so a router sending a wrong password showed up as healthy traffic. The handler now logs one line per outcome (`good`, `badauth`, `nohost`, `notfqdn`, `dnserr`); the password is never logged.
 - **Lambda: occasional `ssm fetch failed: ... EOF`.** A kept-alive connection could be stale after Lambda froze the process between invocations, and net/http does not resend a POST. The Lambda now opens a new connection per call.
@@ -300,6 +304,7 @@ tests/               # Integration tests
 
 ## Version History
 
+- **v0.3.3** (2026-11-26) — Lambda logs every outcome, fresh connection per AWS call, no drift after rotation; yaml v4
 - **v0.3.2** (2026-04-19) — Lambda dry-run + coverage lift to 69.7% + AWS v6 + Codecov hardening
 - **v0.3.1** (2026-04-18) — Test coverage 54% → 67.5%; configurable `update_interval`/`update_timeout`; `fatalf` extraction
 - **v0.3.0** (2026-04-18) — AWS Lambda deployment form (API Gateway + Route53 + SSM + OpenTofu module)
@@ -308,7 +313,8 @@ tests/               # Integration tests
 - **v0.1.1** (2025-09-14) — Bug fixes, UniFi OS v4 support, documentation improvements
 - **v0.1.0** (2025-09-13) — Initial release with core functionality
 
-[Unreleased]: https://github.com/descoped/dddns/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/descoped/dddns/compare/v0.3.3...HEAD
+[v0.3.3]: https://github.com/descoped/dddns/releases/tag/v0.3.3
 [v0.3.2]: https://github.com/descoped/dddns/releases/tag/v0.3.2
 [v0.3.1]: https://github.com/descoped/dddns/releases/tag/v0.3.1
 [v0.3.0]: https://github.com/descoped/dddns/releases/tag/v0.3.0

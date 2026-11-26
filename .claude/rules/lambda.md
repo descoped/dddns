@@ -23,14 +23,14 @@ cd .. && ./scripts/rotate-secret.sh                    # rotate shared secret; p
 
 ## Secret rotation (Lambda mode)
 
-Rotation principle: **tofu owns the storage slot, operator owns the value.** Tofu creates the SSM parameter with a throwaway bootstrap placeholder and `lifecycle { ignore_changes = [value] }`, then steps aside. No subsequent `tofu apply` touches the secret.
+Rotation principle: **tofu owns the storage slot, operator owns the value.** Tofu creates the SSM parameter with a throwaway bootstrap placeholder and `lifecycle { ignore_changes = [value, description] }`, then steps aside. No subsequent `tofu apply` touches the secret.
 
 Rotation script: `deploy/aws-lambda/scripts/rotate-secret.sh`
 
 1. **Generate** — `openssl rand -hex 32` → 256-bit secret in shell memory (never written to disk or log).
 2. **Store** — `aws ssm put-parameter --overwrite` replaces the SecureString value. SSM re-encrypts server-side with `alias/aws/ssm`; parameter version bumps.
 3. **Print** — framed block to stdout, exactly once, for pasting into the DDNS client's password field. Shell exits → plaintext gone.
-4. **Propagate** — Lambda picks up the new value within ≤60 s (in-process cache in `deploy/aws-lambda/ssm.go`). During the overlap window, both old and new secrets authenticate — no gap in push traffic.
+4. **Propagate** — Lambda picks up the new value within ≤60 s (in-process cache, `secretCache` in `deploy/aws-lambda/handler.go`). Until then a warm container accepts only the old secret; pushes get `badauth` until both the cache and the router have the new value, and inadyn's retry closes the gap.
 
 Run from `deploy/aws-lambda/`. The script auto-reads the parameter name and region from `tofu output`; override with `-n /path -r region` for standalone use.
 
@@ -56,7 +56,8 @@ Do not add `DeleteResourceRecordSets`, multi-record access, or multi-parameter S
 
 ## Common gotchas
 
-- **401 on the first push after `tofu apply`** — parameter still holds the bootstrap placeholder. Run the rotate script.
-- **Old secret still works for ≤60 s after rotation** — normal, in-process cache. Not a bug.
+- **Every outcome is HTTP 200** (dyndns clients read the body), so API Gateway 4xx/5xx metrics stay at zero when pushes are rejected. Read the outcome from the Lambda log: one line per push (`good`, `badauth`, `nohost`, `notfqdn`, `dnserr`).
+- **`badauth` on the first push after `tofu apply`** — parameter still holds the bootstrap placeholder. Run the rotate script.
+- **Old secret still works, and the new one is rejected, for ≤60 s after rotation** — normal, in-process cache. Not a bug.
 - **Missed the copy?** Cannot retrieve from SSM (encrypted at rest; the rotate script is the only moment the secret exists in plaintext). Safe to re-run — `--overwrite` is idempotent.
 - **Reusability** — zero hardcoded account IDs, zone IDs, or hostnames in any `.tf` file; resource names derive from `${var.name_prefix}-${replace(var.hostname, ".", "-")}`. Two deployments in the same account do not collide.
